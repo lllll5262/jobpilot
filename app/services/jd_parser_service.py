@@ -1,12 +1,12 @@
 """JD 解析应用服务。"""
 
 import logging
-from typing import Any, Protocol
 
 from pydantic import ValidationError
 
 from app.core.exceptions import AppException
 from app.llm.client import (
+    JSONGenerator,
     LLMClientError,
     LLMConfigurationError,
     LLMResponseError,
@@ -19,14 +19,6 @@ from app.llm.prompts.jd_parser import (
 from app.schemas.job import JDParseResult
 
 logger = logging.getLogger(__name__)
-
-
-class JSONGenerator(Protocol):
-    """JD 服务所需的最小 LLM 能力接口。"""
-
-    async def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        """生成 JSON 对象。"""
-        ...
 
 
 class JDParserService:

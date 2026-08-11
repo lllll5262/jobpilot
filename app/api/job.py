@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app.core.config import get_settings
+from app.api.dependencies import get_llm_client
 from app.llm.client import OpenAICompatibleClient
 from app.schemas.common import ApiResponse
 from app.schemas.job import JDParseRequest, JDParseResult
@@ -13,17 +13,10 @@ from app.services.jd_parser_service import JDParserService
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
 
-def get_jd_parser_service() -> JDParserService:
+def get_jd_parser_service(
+    client: Annotated[OpenAICompatibleClient, Depends(get_llm_client)],
+) -> JDParserService:
     """根据环境配置组装 JD 解析服务，便于测试时替换依赖。"""
-    settings = get_settings()
-    api_key = settings.llm_api_key.get_secret_value() if settings.llm_api_key is not None else None
-    client = OpenAICompatibleClient(
-        provider=settings.llm_provider,
-        api_key=api_key,
-        base_url=settings.llm_base_url,
-        model=settings.llm_model,
-        timeout_seconds=settings.llm_timeout_seconds,
-    )
     return JDParserService(client)
 
 

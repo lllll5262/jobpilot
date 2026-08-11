@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 1 在 FastAPI 基础工程上新增 JD 结构化解析能力。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 2 在 JD 解析基础上新增文本型 PDF 简历解析能力。
 
 ## 环境要求
 
@@ -20,6 +20,7 @@ uvicorn app.main:app --reload
 
 - 健康检查：`http://127.0.0.1:8000/health`
 - JD 解析：`POST http://127.0.0.1:8000/jobs/parse`
+- 简历解析：`POST http://127.0.0.1:8000/resumes/parse`
 - OpenAPI 文档：`http://127.0.0.1:8000/docs`
 
 健康检查响应：
@@ -58,6 +59,18 @@ Invoke-RestMethod `
 
 响应中的 `data` 已经过 Pydantic Schema 校验；模型返回非法 JSON、缺少字段或包含额外字段时，接口会返回统一错误结构。
 
+## 简历解析
+
+上传字段名为 `file`，当前只支持带有文本层的 PDF，不支持图片扫描件和 OCR。可在 Swagger 文档中直接上传，也可以使用：
+
+```powershell
+curl.exe -X POST "http://127.0.0.1:8000/resumes/parse" `
+  -H "accept: application/json" `
+  -F "file=@E:/path/to/resume.pdf;type=application/pdf"
+```
+
+默认限制为 10 MB、20 页和 50000 个提取字符，可通过 `.env` 中的 `JOBPILOT_RESUME_*` 配置调整。
+
 ## 质量检查
 
 ```powershell
@@ -72,6 +85,7 @@ app/
 ├── api/            # HTTP 路由
 ├── core/           # 配置、日志和异常处理
 ├── llm/            # OpenAI-compatible 客户端与 Prompt
+├── parsers/        # PDF 等原始文档解析器
 ├── schemas/        # Pydantic 数据模型
 ├── services/       # 应用服务
 └── main.py         # 应用入口

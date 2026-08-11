@@ -2,13 +2,21 @@
 
 import json
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 LLMProvider = Literal["qwen", "deepseek"]
+
+
+class JSONGenerator(Protocol):
+    """应用服务依赖的最小 LLM JSON 生成接口。"""
+
+    async def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        """生成 JSON 对象。"""
+        ...
 
 
 class LLMClientError(Exception):
