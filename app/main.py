@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.health import router as health_router
+from app.api.job import router as job_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
@@ -36,3 +37,4 @@ app = FastAPI(
 
 register_exception_handlers(app)
 app.include_router(health_router)
+app.include_router(job_router)

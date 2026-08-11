@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 0 仅提供可独立运行、测试和提交的 FastAPI 基础工程，不包含 AI 能力。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 1 在 FastAPI 基础工程上新增 JD 结构化解析能力。
 
 ## 环境要求
 
@@ -19,6 +19,7 @@ uvicorn app.main:app --reload
 服务启动后可访问：
 
 - 健康检查：`http://127.0.0.1:8000/health`
+- JD 解析：`POST http://127.0.0.1:8000/jobs/parse`
 - OpenAPI 文档：`http://127.0.0.1:8000/docs`
 
 健康检查响应：
@@ -37,6 +38,26 @@ uvicorn app.main:app --reload
 
 应用通过 `pydantic-settings` 读取环境变量。复制 `.env.example` 为 `.env`，然后按需修改；环境变量以 `JOBPILOT_` 为前缀，系统环境变量的优先级高于 `.env`。
 
+JD 解析支持 Qwen 和 DeepSeek 的 OpenAI-compatible API。默认配置为 Qwen；如需切换 DeepSeek，请参考 `.env.example` 修改供应商、API 地址和模型。API Key 只应保存在本地 `.env` 或系统环境变量中，禁止提交到 Git。
+
+## JD 解析
+
+请求示例：
+
+```powershell
+$body = @{
+  jd_text = "Java后端实习生，熟悉 Java、Spring Boot、MySQL，掌握 Redis，Kafka 经验优先。"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/jobs/parse" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+响应中的 `data` 已经过 Pydantic Schema 校验；模型返回非法 JSON、缺少字段或包含额外字段时，接口会返回统一错误结构。
+
 ## 质量检查
 
 ```powershell
@@ -50,7 +71,9 @@ ruff check .
 app/
 ├── api/            # HTTP 路由
 ├── core/           # 配置、日志和异常处理
+├── llm/            # OpenAI-compatible 客户端与 Prompt
 ├── schemas/        # Pydantic 数据模型
+├── services/       # 应用服务
 └── main.py         # 应用入口
 tests/              # 自动化测试
 ```

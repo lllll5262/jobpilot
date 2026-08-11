@@ -1,7 +1,9 @@
 """应用配置。"""
 
 from functools import lru_cache
+from typing import Literal
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +14,11 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     log_level: str = "INFO"
+    llm_provider: Literal["qwen", "deepseek"] = "qwen"
+    llm_api_key: SecretStr | None = None
+    llm_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    llm_model: str = "qwen-plus"
+    llm_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
 
     model_config = SettingsConfigDict(
         env_file=".env",
