@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 2 在 JD 解析基础上新增文本型 PDF 简历解析能力。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 3 在简历解析基础上新增独立的候选人能力画像。
 
 ## 环境要求
 
@@ -21,6 +21,7 @@ uvicorn app.main:app --reload
 - 健康检查：`http://127.0.0.1:8000/health`
 - JD 解析：`POST http://127.0.0.1:8000/jobs/parse`
 - 简历解析：`POST http://127.0.0.1:8000/resumes/parse`
+- 能力画像：`POST http://127.0.0.1:8000/profiles/build`
 - OpenAPI 文档：`http://127.0.0.1:8000/docs`
 
 健康检查响应：
@@ -70,6 +71,25 @@ curl.exe -X POST "http://127.0.0.1:8000/resumes/parse" `
 ```
 
 默认限制为 10 MB、20 页和 50000 个提取字符，可通过 `.env` 中的 `JOBPILOT_RESUME_*` 配置调整。
+
+## 候选人能力画像
+
+Resume 保存候选人做过的教育、项目和实习经历；Candidate Profile 根据这些经历评估技能熟练度和领域能力。两者使用独立 Schema，`POST /profiles/build` 接收已解析的 Resume：
+
+```json
+{
+  "resume": {
+    "personal_info": {"name": null, "email": null, "phone": null, "location": null},
+    "education": [],
+    "skills": ["Java", "Redis", "RabbitMQ"],
+    "projects": [],
+    "internships": [],
+    "certificates": []
+  }
+}
+```
+
+技能等级仅允许 `advanced`、`intermediate`、`beginner` 和 `unknown`。当前阶段不保存数据库，调用方负责保留 Resume 和 Profile。
 
 ## 质量检查
 
