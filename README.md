@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 3 在简历解析基础上新增独立的候选人能力画像。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 4 首次组合 Resume、Candidate Profile 和 JD，形成岗位匹配闭环。
 
 ## 环境要求
 
@@ -22,6 +22,7 @@ uvicorn app.main:app --reload
 - JD 解析：`POST http://127.0.0.1:8000/jobs/parse`
 - 简历解析：`POST http://127.0.0.1:8000/resumes/parse`
 - 能力画像：`POST http://127.0.0.1:8000/profiles/build`
+- 岗位匹配：`POST http://127.0.0.1:8000/matches/evaluate`
 - OpenAPI 文档：`http://127.0.0.1:8000/docs`
 
 健康检查响应：
@@ -91,6 +92,18 @@ Resume 保存候选人做过的教育、项目和实习经历；Candidate Profil
 
 技能等级仅允许 `advanced`、`intermediate`、`beginner` 和 `unknown`。当前阶段不保存数据库，调用方负责保留 Resume 和 Profile。
 
+## 岗位匹配
+
+`POST /matches/evaluate` 的请求体同时包含 `resume`、`profile` 和 `job`。LLM 只负责项目相关度、经验匹配度和技能语义等价判断；Python Rule Engine 按以下固定规则计算最终分数：
+
+- 必需技能匹配：40%
+- 项目匹配：25%
+- 经验匹配：15%
+- 学历匹配：10%
+- 优先技能加分：10%
+
+推荐阈值为：80 分及以上 `RECOMMEND`，60～79 分 `CONSIDER`，低于 60 分 `NOT_RECOMMEND`。最终分数不接受 LLM 直接输入。
+
 ## 质量检查
 
 ```powershell
@@ -106,6 +119,7 @@ app/
 ├── core/           # 配置、日志和异常处理
 ├── llm/            # OpenAI-compatible 客户端与 Prompt
 ├── parsers/        # PDF 等原始文档解析器
+├── rules/          # 确定性的技能、学历和算分规则
 ├── schemas/        # Pydantic 数据模型
 ├── services/       # 应用服务
 └── main.py         # 应用入口
