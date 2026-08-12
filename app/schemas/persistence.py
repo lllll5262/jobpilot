@@ -99,6 +99,16 @@ class AnalysisCreateRequest(PersistenceRequest):
     job_id: int = Field(gt=0)
 
 
+class AnalysisDraft(BaseModel):
+    """已完成规则计算、尚未写入数据库的岗位分析。"""
+
+    user_id: int
+    resume_id: int
+    profile_id: int
+    job_id: int
+    result: MatchResult
+
+
 class AnalysisRecord(BaseModel):
     """已保存的岗位匹配分析。"""
 

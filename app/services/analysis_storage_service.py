@@ -9,7 +9,7 @@ from app.repository.resume_repository import ResumeRepository
 from app.repository.user_repository import UserRepository
 from app.schemas.job import JDParseResult
 from app.schemas.match import MatchResult
-from app.schemas.persistence import AnalysisRecord
+from app.schemas.persistence import AnalysisDraft, AnalysisRecord
 from app.schemas.profile import CandidateProfile
 from app.schemas.resume import ResumeParseResult
 from app.services.match_service import MatchService
@@ -36,7 +36,12 @@ class AnalysisStorageService:
         self._user_repository = user_repository
 
     async def analyze_and_save(self, *, user_id: int, job_id: int) -> AnalysisRecord:
-        """加载当前 Profile 及对应 Resume，执行匹配后保存。"""
+        """兼容阶段 5 接口：依次计算并保存岗位分析。"""
+        draft = await self.calculate(user_id=user_id, job_id=job_id)
+        return await self.save(draft)
+
+    async def calculate(self, *, user_id: int, job_id: int) -> AnalysisDraft:
+        """加载当前 Profile 和 Resume 并计算匹配，但不写数据库。"""
         await require_user(self._user_repository, user_id)
         job_record = await self._job_repository.get_by_id(job_id, user_id=user_id)
         if job_record is None:
@@ -56,16 +61,26 @@ class AnalysisStorageService:
             profile=CandidateProfile.model_validate(profile_record.profile_data),
             job=JDParseResult.model_validate(job_record.parsed_data),
         )
-        record = await self._analysis_repository.create(
+        return AnalysisDraft(
             user_id=user_id,
             resume_id=resume_record.id,
             profile_id=profile_record.id,
             job_id=job_record.id,
-            match_score=result.match_score,
-            recommendation=result.recommendation.value,
-            result_data=result.model_dump(mode="json"),
+            result=result,
         )
-        return self._to_record(record, result)
+
+    async def save(self, draft: AnalysisDraft) -> AnalysisRecord:
+        """保存已经完成计算且通过 Pydantic 校验的分析草稿。"""
+        record = await self._analysis_repository.create(
+            user_id=draft.user_id,
+            resume_id=draft.resume_id,
+            profile_id=draft.profile_id,
+            job_id=draft.job_id,
+            match_score=draft.result.match_score,
+            recommendation=draft.result.recommendation.value,
+            result_data=draft.result.model_dump(mode="json"),
+        )
+        return self._to_record(record, draft.result)
 
     async def list_history(
         self,

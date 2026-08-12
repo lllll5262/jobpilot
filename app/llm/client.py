@@ -5,6 +5,7 @@ import logging
 from typing import Any, Literal, Protocol
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,49 @@ class JSONGenerator(Protocol):
 
     async def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         """生成 JSON 对象。"""
+        ...
+
+
+class AgentFunctionCall(BaseModel):
+    """OpenAI-compatible Tool Calling 中的函数调用。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    arguments: str = "{}"
+
+
+class AgentToolCall(BaseModel):
+    """模型返回的一次工具调用。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    type: Literal["function"] = "function"
+    function: AgentFunctionCall
+
+
+class AgentAssistantMessage(BaseModel):
+    """Agent 循环需要的最小 assistant 消息结构。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    role: Literal["assistant"] = "assistant"
+    content: str | None = None
+    tool_calls: list[AgentToolCall] = Field(default_factory=list)
+
+
+class ToolCallingModel(Protocol):
+    """Job Agent 依赖的最小 Tool Calling 模型接口。"""
+
+    async def generate_with_tools(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        require_tool: bool,
+    ) -> AgentAssistantMessage:
+        """根据对话和工具定义生成工具调用或最终回复。"""
         ...
 
 
@@ -109,3 +153,57 @@ class OpenAICompatibleClient:
         if not isinstance(structured_data, dict):
             raise LLMResponseError("LLM JSON output must be an object")
         return structured_data
+
+    async def generate_with_tools(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        require_tool: bool,
+    ) -> AgentAssistantMessage:
+        """调用兼容接口的 Tool Calling 模式，返回标准化 assistant 消息。"""
+        if not self._api_key:
+            raise LLMConfigurationError("LLM API key is not configured")
+
+        request_body: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": 0.1,
+        }
+        if tools:
+            request_body["tools"] = tools
+            if require_tool:
+                # 两家兼容接口都支持具名工具选择；Graph 每轮只开放一个工具。
+                request_body["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": tools[0]["function"]["name"]},
+                }
+            else:
+                request_body["tool_choice"] = "auto"
+        if self._provider == "qwen":
+            # Qwen Tool Calling 使用非思考模式，避免 reasoning 内容干扰工具参数。
+            request_body["enable_thinking"] = False
+
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=self._timeout_seconds,
+                transport=self._transport,
+            ) as client:
+                response = await client.post("chat/completions", json=request_body)
+                response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError("LLM request timed out") from exc
+        except httpx.HTTPStatusError as exc:
+            logger.warning("LLM Tool Calling 请求失败 status_code=%s", exc.response.status_code)
+            raise LLMClientError("LLM request failed") from exc
+        except httpx.HTTPError as exc:
+            logger.warning("LLM Tool Calling 网络失败 error_type=%s", type(exc).__name__)
+            raise LLMClientError("LLM request failed") from exc
+
+        try:
+            message = response.json()["choices"][0]["message"]
+            return AgentAssistantMessage.model_validate(message)
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise LLMResponseError("LLM returned an invalid tool-calling response") from exc

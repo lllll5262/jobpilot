@@ -126,6 +126,27 @@ Get-Content "database/jobpilot_schema.sql" -Raw | mysql -h <mysql-host> -P <mysq
 - `POST /users/{user_id}/job-analyses`：匹配并保存分析
 - `GET /users/{user_id}/job-analyses`：查看历史岗位分析
 
+## 单 Job Agent
+
+`POST /users/{user_id}/agents/job/analyze` 使用 LangGraph 驱动以下固定 Tool Calling 闭环：
+
+```text
+get_candidate_profile
+  → parse_job_description
+  → calculate_job_match
+  → save_analysis
+  → Final Answer
+```
+
+Tool 只负责读取可信 Agent State 并调用 Service；JD 解析、匹配规则和数据库读写仍分别位于 Service、Rule Engine 和 Repository。请求示例：
+
+```json
+{
+  "message": "帮我分析一下这个岗位适不适合我。",
+  "jd_text": "Java后端工程师，要求熟悉 Java、Spring Boot、MySQL 和 Redis。"
+}
+```
+
 完整表结构与初始化说明见 [DATABASE.md](DATABASE.md)。
 
 ## 质量检查
@@ -139,6 +160,7 @@ ruff check .
 
 ```text
 app/
+├── agents/         # LangGraph Agent、状态和提示词
 ├── api/            # HTTP 路由
 ├── core/           # 配置、日志和异常处理
 ├── db/             # SQLAlchemy Async Engine 与 ORM Base
@@ -149,6 +171,7 @@ app/
 ├── rules/          # 确定性的技能、学历和算分规则
 ├── schemas/        # Pydantic 数据模型
 ├── services/       # 应用服务
+├── tools/          # Agent Tool 适配层，不承载业务逻辑
 └── main.py         # 应用入口
 tests/              # 自动化测试
 ```

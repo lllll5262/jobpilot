@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.agent import router as agent_router
 from app.api.health import router as health_router
 from app.api.job import router as job_router
 from app.api.match import router as match_router
@@ -48,3 +49,4 @@ app.include_router(resume_router)
 app.include_router(profile_router)
 app.include_router(match_router)
 app.include_router(persistence_router)
+app.include_router(agent_router)
