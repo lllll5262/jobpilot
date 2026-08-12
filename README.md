@@ -147,6 +147,38 @@ Tool 只负责读取可信 Agent State 并调用 Service；JD 解析、匹配规
 }
 ```
 
+## 多轮会话与 Redis Memory
+
+阶段 7 新增 `POST /users/{user_id}/agents/job/chat`。同一个 `session_id` 会读取最近 N 轮对话与最近岗位分析缓存，因此可以继续追问“刚才那个岗位”。首次分析请求：
+
+```json
+{
+  "session_id": "demo-session-001",
+  "message": "这个岗位怎么样？",
+  "jd_text": "Java后端工程师，要求掌握 Java、Spring Boot、MySQL 和 Redis。"
+}
+```
+
+使用相同 `session_id` 追问时可以不传 `jd_text`：
+
+```json
+{
+  "session_id": "demo-session-001",
+  "message": "那和刚才那个比呢？"
+}
+```
+
+`GET /users/{user_id}/agents/job/sessions/{session_id}` 可以查看当前 Session 的最近对话与岗位分析缓存。Redis 数据按职责隔离：
+
+```text
+jobpilot:session:*      # Session 归属、轮次、TTL
+jobpilot:memory:*       # 最近 N 轮用户/助手消息
+jobpilot:cache:*        # 最近岗位分析上下文
+jobpilot:checkpoint:*   # LangGraph 执行状态
+```
+
+当前实现使用 `redis-py asyncio` 和普通 Redis 命令实现 LangGraph Checkpointer，不要求 RedisJSON 或 RediSearch。MySQL 仍是用户、简历、Profile、岗位和分析结果的唯一事实来源；Redis 数据均设置 TTL。
+
 完整表结构与初始化说明见 [DATABASE.md](DATABASE.md)。
 
 ## 质量检查
@@ -166,6 +198,7 @@ app/
 ├── db/             # SQLAlchemy Async Engine 与 ORM Base
 ├── llm/            # OpenAI-compatible 客户端与 Prompt
 ├── models/         # SQLAlchemy ORM Model
+├── memory/         # Redis Session、短期 Memory、Cache 与 Checkpointer
 ├── parsers/        # PDF 等原始文档解析器
 ├── repository/     # 数据访问层
 ├── rules/          # 确定性的技能、学历和算分规则

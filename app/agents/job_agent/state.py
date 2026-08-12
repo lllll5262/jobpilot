@@ -12,7 +12,11 @@ class JobAgentState(TypedDict):
     messages: Annotated[list[dict[str, Any]], operator.add]
     tool_trace: Annotated[list[JobAgentToolName], operator.add]
     user_id: int
-    jd_text: str
+    jd_text: str | None
+    requires_analysis: bool
+    analysis_context: list[dict[str, Any]]
+    session_id: NotRequired[str]
+    turn: NotRequired[int]
     profile: NotRequired[dict[str, Any]]
     job: NotRequired[dict[str, Any]]
     match_draft: NotRequired[dict[str, Any]]

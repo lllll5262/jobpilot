@@ -11,7 +11,7 @@ import pytest
 from app.agents.job_agent import JobAgent
 from app.llm.client import AgentAssistantMessage, LLMProvider, OpenAICompatibleClient
 from app.main import app
-from app.schemas.agent import JobAgentRequest
+from app.schemas.agent import ConversationMessage, JobAgentRequest, JobAgentSessionRequest
 from app.schemas.persistence import AnalysisDraft, AnalysisRecord, JobRecord, ProfileRecord
 
 CREATED_AT = datetime(2026, 8, 12, tzinfo=UTC)
@@ -42,6 +42,7 @@ class StubToolCallingModel:
 
     def __init__(self) -> None:
         self.called_tools: list[str] = []
+        self.last_messages: list[dict[str, Any]] = []
 
     async def generate_with_tools(
         self,
@@ -51,6 +52,7 @@ class StubToolCallingModel:
         require_tool: bool,
     ) -> AgentAssistantMessage:
         assert messages[0]["role"] == "system"
+        self.last_messages = messages
         previous_tool_calls = [
             message
             for message in messages
@@ -250,3 +252,44 @@ def test_job_agent_completes_tool_calling_workflow() -> None:
     assert result.analysis.id == 40
     assert result.analysis.result.match_score == 82
     assert "建议投递" in result.final_answer
+
+
+def test_job_agent_follow_up_uses_history_without_tools() -> None:
+    """没有新 JD 的追问应直接使用会话上下文，不重复解析和保存。"""
+    model = StubToolCallingModel()
+    analysis_service = StubAnalysisService()
+    agent = JobAgent(
+        model=model,
+        user_id=1,
+        profile_service=StubProfileService(),  # type: ignore[arg-type]
+        job_service=StubJobService(),  # type: ignore[arg-type]
+        analysis_service=analysis_service,  # type: ignore[arg-type]
+    )
+    result = asyncio.run(
+        agent.chat(
+            JobAgentSessionRequest(
+                session_id="session-001",
+                message="那和刚才那个比呢？",
+            ),
+            turn=2,
+            history=[
+                ConversationMessage(
+                    role="user",
+                    content="这个岗位怎么样？",
+                    created_at=CREATED_AT,
+                ),
+                ConversationMessage(
+                    role="assistant",
+                    content="建议投递。",
+                    created_at=CREATED_AT,
+                ),
+            ],
+            analysis_context=[{"job_title": "Java后端工程师", "match_score": 82}],
+        )
+    )
+
+    assert model.called_tools == []
+    assert result.tool_trace == []
+    assert result.analysis is None
+    assert result.job is None
+    assert "Java后端工程师" in model.last_messages[0]["content"]

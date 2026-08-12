@@ -26,6 +26,11 @@ class Settings(BaseSettings):
         "mysql+aiomysql://root:password@127.0.0.1:3306/jobpilot?charset=utf8mb4"
     )
     database_echo: bool = False
+    redis_url: SecretStr = SecretStr("redis://:password@127.0.0.1:6379/0")
+    session_ttl_seconds: int = Field(default=86_400, ge=300, le=2_592_000)
+    conversation_max_turns: int = Field(default=10, ge=1, le=50)
+    agent_cache_ttl_seconds: int = Field(default=3_600, ge=60, le=86_400)
+    checkpoint_ttl_seconds: int = Field(default=86_400, ge=300, le=2_592_000)
 
     model_config = SettingsConfigDict(
         env_file=".env",

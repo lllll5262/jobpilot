@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.database import dispose_database
+from app.memory.connection import dispose_redis
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -31,9 +32,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         settings.app_name,
         settings.environment,
     )
-    yield
-    await dispose_database()
-    logger.info("应用停止 name=%s", settings.app_name)
+    try:
+        yield
+    finally:
+        await dispose_database()
+        await dispose_redis()
+        logger.info("应用停止 name=%s", settings.app_name)
 
 
 app = FastAPI(

@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -106,6 +107,22 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=503,
             code=50310,
             message="database service unavailable",
+        )
+
+    @app.exception_handler(RedisError)
+    async def handle_redis_exception(request: Request, exc: RedisError) -> JSONResponse:
+        # Redis 异常不记录连接 URL，避免密码随日志泄露。
+        logger.exception(
+            "Redis 操作失败 method=%s path=%s error_type=%s",
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+            exc_info=exc,
+        )
+        return _error_response(
+            status_code=503,
+            code=50320,
+            message="session service unavailable",
         )
 
     @app.exception_handler(Exception)

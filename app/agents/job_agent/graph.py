@@ -3,6 +3,7 @@
 import json
 from typing import Any, Literal
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.job_agent.prompt import build_job_agent_system_prompt
@@ -22,7 +23,13 @@ TOOL_ORDER: tuple[JobAgentToolName, ...] = (
 class JobAgentGraph:
     """让模型发起 Tool Calling，并由 LangGraph 驱动状态循环。"""
 
-    def __init__(self, model: ToolCallingModel, tools: list[BaseAgentTool]) -> None:
+    def __init__(
+        self,
+        model: ToolCallingModel,
+        tools: list[BaseAgentTool],
+        *,
+        checkpointer: BaseCheckpointSaver[Any] | None = None,
+    ) -> None:
         self._model = model
         self._tools = {tool.name: tool for tool in tools}
         if set(self._tools) != set(TOOL_ORDER):
@@ -38,18 +45,36 @@ class JobAgentGraph:
             {"tools": "tools", "end": END},
         )
         builder.add_edge("tools", "agent")
-        self._graph = builder.compile()
+        self._graph = builder.compile(checkpointer=checkpointer)
 
-    async def run(self, state: JobAgentState) -> JobAgentState:
+    async def run(
+        self,
+        state: JobAgentState,
+        *,
+        thread_id: str | None = None,
+        checkpoint_ns: str = "",
+    ) -> JobAgentState:
         """执行一次有界 Agent 循环，防止模型异常导致无限调用。"""
-        return await self._graph.ainvoke(state, config={"recursion_limit": 12})
+        config: dict[str, Any] = {"recursion_limit": 12}
+        if thread_id is not None:
+            config["configurable"] = {
+                "thread_id": thread_id,
+                "checkpoint_ns": checkpoint_ns,
+            }
+        return await self._graph.ainvoke(state, config=config)
 
     async def _call_model(self, state: JobAgentState) -> dict[str, Any]:
         """只暴露当前状态所允许的下一步 Tool。"""
         next_tool = self._next_required_tool(state)
         definitions = [self._tools[next_tool].definition] if next_tool else []
         messages = [
-            {"role": "system", "content": build_job_agent_system_prompt(next_tool)},
+            {
+                "role": "system",
+                "content": build_job_agent_system_prompt(
+                    next_tool,
+                    state["analysis_context"],
+                ),
+            },
             *state["messages"],
         ]
         response = await self._model.generate_with_tools(
@@ -118,12 +143,14 @@ class JobAgentGraph:
     @staticmethod
     def _next_required_tool(state: JobAgentState) -> JobAgentToolName | None:
         """依据领域状态确定唯一合法的下一步工具。"""
-        if "profile" not in state:
+        if not state["requires_analysis"]:
+            return None
+        if not state.get("profile"):
             return "get_candidate_profile"
-        if "job" not in state:
+        if not state.get("job"):
             return "parse_job_description"
-        if "match_draft" not in state:
+        if not state.get("match_draft"):
             return "calculate_job_match"
-        if "analysis" not in state:
+        if not state.get("analysis"):
             return "save_analysis"
         return None
