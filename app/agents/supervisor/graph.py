@@ -125,6 +125,12 @@ class SupervisorGraph:
                     action=JobSupervisorAction.ANALYZE_JOB,
                     reason="检测到完整 JD，默认进行岗位匹配分析",
                 )
+        elif any(keyword in lowered for keyword in ("优化简历", "修改简历")):
+            route = SupervisorRoute(
+                target_agent=AgentTarget.RESUME,
+                action=ResumeAgentAction.OPTIMIZE_RESUME,
+                reason="用户希望针对目标岗位优化简历",
+            )
         elif lowered in {"你是谁", "你是什么", "你能做什么", "介绍一下你自己"}:
             route = SupervisorRoute(
                 target_agent=AgentTarget.SUPERVISOR,
@@ -226,7 +232,16 @@ class SupervisorGraph:
                     ["job_id", "jd_text"],
                 )
         action = ResumeAgentAction(route.action)
-        result = await self._resume_agent.execute(action=action, payload=payload)
+        try:
+            result = await self._resume_agent.execute(action=action, payload=payload)
+        except AppException as exc:
+            if exc.code in {40402, 40403}:
+                return self._missing_context(
+                    state,
+                    "还没有可用于优化的简历和候选人画像。请先点击附件按钮上传 PDF 简历。",
+                    ["resume"],
+                )
+            raise
         return {
             "agent_result": result.model_dump(mode="json"),
             "agent_trace": [*state["agent_trace"], "resume"],

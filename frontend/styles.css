@@ -150,6 +150,29 @@ button { color: inherit; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .modal-actions button { height: 39px; padding: 0 18px; border: 1px solid var(--line); border-radius: 9px; background: white; cursor: pointer; }
 .modal-actions button:last-child { color: white; border-color: var(--primary); background: var(--primary); }
+.optimization-modal { width: min(680px, 100%); }
+.optimization-tabs { display: flex; gap: 8px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.optimization-tabs button { height: 34px; padding: 0 15px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); cursor: pointer; }
+.optimization-tabs button.active { color: white; border-color: var(--primary); background: var(--primary); }
+.job-picker { display: grid; gap: 9px; max-height: 320px; overflow-y: auto; }
+.job-option { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; width: 100%; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); cursor: pointer; text-align: left; }
+.job-option:hover, .job-option.selected { border-color: #8e87f5; background: var(--surface-soft); box-shadow: 0 0 0 3px rgba(79,70,237,.07); }
+.job-option input { margin-top: 3px; accent-color: var(--primary); }
+.job-option span { display: grid; gap: 5px; }.job-option small, .empty-hint, .optimization-context { color: var(--muted); }
+#optimization-paste-panel textarea { width: 100%; min-height: 230px; padding: 13px; resize: vertical; border: 1px solid var(--line); border-radius: 11px; outline: none; background: var(--surface); color: var(--text); line-height: 1.6; }
+#optimization-paste-panel textarea:focus { border-color: #7770f2; box-shadow: 0 0 0 3px rgba(79,70,229,.09); }
+.optimization-context { margin: 14px 0 0; font-size: 12px; }
+.optimization-result { display: grid; gap: 14px; }
+.optimization-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.optimization-summary span { padding: 5px 10px; border-radius: 999px; color: #4f46e5; background: #efefff; font-size: 12px; }
+.optimization-suggestion { padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: #fbfbfe; }
+.optimization-suggestion h4 { margin: 0 0 10px; font-size: 14px; }
+.optimization-suggestion p { margin: 7px 0; line-height: 1.7; }
+.optimization-suggestion .original { padding: 10px; border-left: 3px solid #c4c8d4; background: #f4f5f8; }
+.optimization-suggestion .suggested { padding: 10px; border-left: 3px solid var(--green); background: #effaf4; }
+.optimization-suggestion small { color: var(--muted); }
+body.dark .job-option, body.dark #optimization-paste-panel textarea, body.dark .optimization-tabs button, body.dark .optimization-suggestion { background: var(--surface); }
+body.dark .optimization-suggestion .original { background: #222632; } body.dark .optimization-suggestion .suggested { background: #173128; }
 
 body.dark { --bg:#11131b; --surface:#191c27; --surface-soft:#222636; --line:#2c3141; --text:#f4f6fb; --muted:#939bad; --shadow:0 15px 40px rgba(0,0,0,.25); }
 body.dark .sidebar, body.dark .topbar, body.dark .right-panel { background: rgba(19,22,31,.88); }

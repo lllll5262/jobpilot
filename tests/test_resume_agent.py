@@ -159,3 +159,24 @@ def test_resume_optimization_filters_unsupported_original_text() -> None:
 
     assert accepted == [valid]
     assert rejected == ["projects[1].description"]
+
+
+def test_resume_optimization_accepts_only_whitespace_differences() -> None:
+    """LLM 仅改变换行或空格时应恢复数据库中的准确原文。"""
+    resume = ResumeParseResult.model_validate(RESUME_DATA)
+    suggestion = ResumeOptimizationSuggestion(
+        section="projects",
+        location="projects[0].description",
+        original_text="使用 Redis 实现 优惠券秒杀功能。",
+        suggested_text="在秒杀项目中使用 Redis 支撑高并发访问。",
+        reason="突出已有场景",
+        jd_keywords=["Redis"],
+    )
+
+    accepted, rejected = ResumeOptimizationService._filter_supported_suggestions(
+        resume=resume,
+        suggestions=[suggestion],
+    )
+
+    assert rejected == []
+    assert accepted[0].original_text == "使用 Redis 实现优惠券秒杀功能。"

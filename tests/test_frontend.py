@@ -34,7 +34,10 @@ def test_frontend_assets_are_served() -> None:
     assert html.status_code == 200
     assert "JobPilot AI 求职助手" in html.text
     assert 'id="resume-file"' in html.text
+    assert 'id="optimization-modal"' in html.text
     assert "/users/${state.context.userId}/supervisor" in script.text
     assert "/users/${state.context.userId}/resumes/parse" in script.text
     assert "/users/${state.context.userId}/profiles/build" in script.text
+    assert "/users/${state.context.userId}/jobs?limit=50&offset=0" in script.text
+    assert 'action === "optimize_resume"' in script.text
     assert ".content-grid" in css.text

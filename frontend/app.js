@@ -5,6 +5,7 @@ const state = {
   lastMessage: "",
   context: { userId: 1, jobId: null, resumeId: null, interviewId: null, questionId: null },
   usage: { conversations: 0, resumes: 0, interviews: 0 },
+  optimization: { tab: "history", selectedJobId: null, jobs: [] },
   recents: [
     ["帮我分析一下这个岗位适不适合我", "刚刚"],
     ["Java 后端实习面试题生成", "昨天"],
@@ -106,6 +107,70 @@ function openContext() {
 }
 
 function closeContext() { $("#context-modal").hidden = true; }
+
+function closeOptimization() { $("#optimization-modal").hidden = true; }
+
+function renderJobPicker() {
+  const picker = $("#job-picker");
+  if (!state.optimization.jobs.length) {
+    picker.innerHTML = '<p class="empty-hint">还没有历史岗位，请切换到“粘贴新 JD”。</p>';
+    return;
+  }
+  picker.innerHTML = state.optimization.jobs.map((record) => `
+    <label class="job-option ${record.id === state.optimization.selectedJobId ? "selected" : ""}">
+      <input type="radio" name="optimization-job" value="${record.id}" ${record.id === state.optimization.selectedJobId ? "checked" : ""} />
+      <span><strong>${escapeHtml(record.job?.job_title || `岗位 ${record.id}`)}</strong><small>岗位 ID：${record.id} · 必备技能：${escapeHtml((record.job?.required_skills || []).slice(0, 5).join("、") || "暂无")}</small></span>
+    </label>`).join("");
+}
+
+function setOptimizationTab(tab) {
+  state.optimization.tab = tab;
+  $$('[data-optimization-tab]').forEach((button) => button.classList.toggle("active", button.dataset.optimizationTab === tab));
+  $("#optimization-history-panel").hidden = tab !== "history";
+  $("#optimization-paste-panel").hidden = tab !== "paste";
+}
+
+async function openResumeOptimization() {
+  setAgent("resume", true);
+  state.optimization.selectedJobId = state.context.jobId;
+  $("#optimization-context-hint").textContent = state.context.resumeId
+    ? `将使用简历 ID ${state.context.resumeId}；未指定时使用当前 Profile 对应的最新简历。`
+    : "将使用当前候选人画像对应的最新简历；如未上传，请先点击附件按钮上传 PDF。";
+  $("#optimization-modal").hidden = false;
+  setOptimizationTab("history");
+  $("#job-picker").innerHTML = '<p class="empty-hint">正在读取历史岗位…</p>';
+  try {
+    const response = await fetch(`/users/${state.context.userId}/jobs?limit=50&offset=0`);
+    state.optimization.jobs = await readApiResponse(response);
+    if (!state.optimization.selectedJobId && state.optimization.jobs.length) {
+      state.optimization.selectedJobId = state.optimization.jobs[0].id;
+    }
+    renderJobPicker();
+  } catch (error) {
+    $("#job-picker").innerHTML = `<p class="empty-hint">历史岗位读取失败：${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function startResumeOptimization() {
+  if (state.optimization.tab === "history") {
+    if (!state.optimization.selectedJobId) {
+      $("#optimization-context-hint").textContent = "请选择一个历史岗位，或切换到“粘贴新 JD”。";
+      return;
+    }
+    state.context.jobId = state.optimization.selectedJobId;
+    localStorage.setItem("jobpilot-context", JSON.stringify(state.context));
+    closeOptimization();
+    sendMessage("针对这个岗位优化我的简历");
+    return;
+  }
+  const jdText = $("#optimization-jd").value.trim();
+  if (jdText.length < 60) {
+    $("#optimization-context-hint").textContent = "请粘贴较完整的岗位 JD（至少 60 个字符）。";
+    return;
+  }
+  closeOptimization();
+  sendMessage(`请针对以下岗位优化我的简历：\n${jdText}`);
+}
 
 function buildPayload(message) {
   const payload = {};
@@ -247,8 +312,17 @@ function humanizeResult(data) {
     return `<p><strong>${escapeHtml(result.filename || "当前简历")}</strong></p><p>技能：${escapeHtml((result.resume.skills || []).join("、") || "暂无")}</p><p>项目经历：${result.resume.projects?.length || 0} 项，教育经历：${result.resume.education?.length || 0} 项。</p>`;
   }
   if (result.suggestions) {
-    const suggestions = result.suggestions.map((item) => `<li><strong>${escapeHtml(item.location)}</strong>：${escapeHtml(item.suggested_text)}<br><small>${escapeHtml(item.reason)}</small></li>`).join("");
-    return `<p><strong>简历优化建议</strong></p>${suggestions ? `<ul>${suggestions}</ul>` : "<p>当前没有可安全应用的逐句修改建议。</p>"}<p style="color:#7b8499">${escapeHtml(result.limitation || "")}</p>`;
+    const suggestions = result.suggestions.map((item, index) => `
+      <section class="optimization-suggestion">
+        <h4>${index + 1}. ${escapeHtml(item.section)} · ${escapeHtml(item.location)}</h4>
+        <p class="original"><strong>原文：</strong>${escapeHtml(item.original_text)}</p>
+        <p class="suggested"><strong>建议修改为：</strong>${escapeHtml(item.suggested_text)}</p>
+        <p><strong>修改理由：</strong>${escapeHtml(item.reason)}</p>
+        <small>覆盖 JD 关键词：${escapeHtml((item.jd_keywords || []).join("、") || "无")}</small>
+      </section>`).join("");
+    const analyses = (result.project_analysis || []).map((item) => `<span>${escapeHtml(item)}</span>`).join("");
+    const issues = (result.issues || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+    return `<div class="optimization-result"><p><strong>简历优化建议</strong></p>${analyses ? `<div class="optimization-summary">${analyses}</div>` : ""}${issues ? `<div><strong>问题定位</strong><ul>${issues}</ul></div>` : ""}${suggestions || "<p>当前没有能在不新增事实的前提下安全生成的逐句修改建议。</p>"}<p style="color:#7b8499">${escapeHtml(result.limitation || "")}</p></div>`;
   }
   return `<p>任务已由 <strong>${escapeHtml(data.target_agent || "专业")}</strong> Agent 完成。</p><pre style="white-space:pre-wrap;background:#f7f8fc;padding:12px;border-radius:8px">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
 }
@@ -344,10 +418,28 @@ function bindEvents() {
   $("#close-context").addEventListener("click", closeContext);
   $("#cancel-context").addEventListener("click", closeContext);
   $("#save-context").addEventListener("click", saveContext);
+  $("#close-optimization").addEventListener("click", closeOptimization);
+  $("#cancel-optimization").addEventListener("click", closeOptimization);
+  $("#start-optimization").addEventListener("click", startResumeOptimization);
+  $("#optimization-modal").addEventListener("click", (event) => { if (event.target.id === "optimization-modal") closeOptimization(); });
+  $$('[data-optimization-tab]').forEach((button) => button.addEventListener("click", () => setOptimizationTab(button.dataset.optimizationTab)));
+  $("#job-picker").addEventListener("change", (event) => {
+    if (event.target.name !== "optimization-job") return;
+    state.optimization.selectedJobId = Number(event.target.value);
+    renderJobPicker();
+  });
+  $$('[data-action]').forEach((button) => button.addEventListener("click", () => {
+    $$(".nav-item").forEach((item) => item.classList.toggle("active", item === button));
+    const action = button.dataset.action;
+    if (action === "optimize_resume") openResumeOptimization();
+    else if (action === "get_resume") sendMessage("查看我的最新简历");
+    else if (action === "create_interview_plan") { setAgent("interview", true); sendMessage("根据我的简历开始模拟面试"); }
+    else if (action === "get_weak_points") { setAgent("interview", true); sendMessage("查看我的面试薄弱点"); }
+  }));
   $("#context-modal").addEventListener("click", (event) => { if (event.target.id === "context-modal") closeContext(); });
   document.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); welcome(); input.focus(); }
-    if (event.key === "Escape") { closeContext(); $("#agent-menu").classList.remove("open"); }
+    if (event.key === "Escape") { closeContext(); closeOptimization(); $("#agent-menu").classList.remove("open"); }
   });
   feed.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-tool]");

@@ -1,5 +1,7 @@
 """Resume Agent 针对历史岗位生成事实受限的简历建议。"""
 
+import re
+
 from app.llm.client import JSONGenerator
 from app.llm.prompts.resume_agent import (
     build_resume_optimization_system_prompt,
@@ -75,7 +77,7 @@ class ResumeOptimizationService:
             profile_id=profile.id,
             job_id=job.id,
             project_analysis=draft.project_analysis,
-            issues=draft.issues,
+            issues=issues,
             suggestions=suggestions,
             limitation="仅基于数据库保存的结构化简历，不包含原始 PDF 全文和排版。",
         )
@@ -102,14 +104,20 @@ class ResumeOptimizationService:
                 if internship.description
             }
         )
-        accepted = [
-            suggestion
-            for suggestion in suggestions
-            if source_texts.get(suggestion.location) == suggestion.original_text
-        ]
-        rejected = [
-            suggestion.location
-            for suggestion in suggestions
-            if source_texts.get(suggestion.location) != suggestion.original_text
-        ]
+        accepted: list[ResumeOptimizationSuggestion] = []
+        rejected: list[str] = []
+        for suggestion in suggestions:
+            source_text = source_texts.get(suggestion.location)
+            if source_text is None or ResumeOptimizationService._normalize_text(
+                source_text
+            ) != ResumeOptimizationService._normalize_text(suggestion.original_text):
+                rejected.append(suggestion.location)
+                continue
+            # 输出时恢复数据库里的准确原文，避免 LLM 对换行或空格做出的无意义改动。
+            accepted.append(suggestion.model_copy(update={"original_text": source_text}))
         return accepted, rejected
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        """仅折叠空白差异，事实内容仍必须与结构化简历一致。"""
+        return re.sub(r"\s+", "", value)

@@ -19,6 +19,8 @@ def build_resume_optimization_system_prompt() -> str:
 4. 如果没有可以安全改写的原文，只写入 issues，不生成对应 suggestion。
 5. suggested_text 可以改善表达，但不得把 JD 中缺少证据的技术写成候选人已掌握。
 6. 只返回 JSON，不返回 Markdown 或额外说明。
+7. 每条 suggestion 必须说明修改位置、原文、修改后文本、理由以及覆盖的 JD 关键词。
+8. 优先改写项目和实习描述；不要为了凑数量重复生成相同建议。
 
 严格符合以下 JSON Schema：
 {schema}"""
