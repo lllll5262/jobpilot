@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#4f46e5" />
+    <title>JobPilot AI 求职助手</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar" aria-label="主导航">
+        <div class="brand">
+          <span class="robot-logo" aria-hidden="true"><i></i><b></b></span>
+          <div><strong>JobPilot</strong><span>AI 求职助手</span></div>
+        </div>
+
+        <button class="new-chat" id="new-chat" type="button">
+          <span>＋</span> 新建对话 <kbd>⌘ K</kbd>
+        </button>
+
+        <nav class="main-nav">
+          <button class="nav-item active" type="button" data-view="chat"><i>◱</i>对话</button>
+          <button class="nav-item" type="button" data-action="get_resume"><i>▤</i>简历管理</button>
+          <button class="nav-item" type="button" data-action="optimize_resume"><i>✦</i>简历优化</button>
+          <button class="nav-item" type="button" data-action="create_interview_plan"><i>◎</i>面试准备</button>
+          <button class="nav-item" type="button" data-action="get_weak_points"><i>◇</i>薄弱点分析</button>
+          <button class="nav-item" type="button" data-view="analytics"><i>▥</i>数据分析</button>
+        </nav>
+
+        <section class="recent-section">
+          <h2>最近对话</h2>
+          <div id="recent-list"></div>
+        </section>
+
+        <button class="collapse-button" id="collapse-sidebar" type="button">
+          <span>‹</span> 收起侧边栏
+        </button>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <button class="mobile-menu" id="mobile-menu" type="button" aria-label="打开导航">☰</button>
+          <span class="robot-logo small" aria-hidden="true"><i></i><b></b></span>
+          <div class="assistant-title">
+            <strong id="header-agent-name">JobPilot AI 助手</strong>
+            <span><i></i>在线</span>
+          </div>
+          <div class="top-actions">
+            <div class="agent-switcher">
+              <button id="agent-switch" type="button">切换 Agent <span>⌄</span></button>
+              <div class="agent-menu" id="agent-menu" role="menu">
+                <button type="button" data-agent="supervisor"><span class="agent-icon purple">✦</span><b>Supervisor</b><small>智能调度</small></button>
+                <button type="button" data-agent="job"><span class="agent-icon green">◇</span><b>Job Analyst</b><small>JD 与岗位匹配</small></button>
+                <button type="button" data-agent="resume"><span class="agent-icon blue">▤</span><b>Resume Expert</b><small>简历与画像</small></button>
+                <button type="button" data-agent="interview"><span class="agent-icon orange">◎</span><b>Interview Coach</b><small>模拟面试</small></button>
+              </div>
+            </div>
+            <button class="icon-button" id="theme-toggle" type="button" aria-label="切换主题">☼</button>
+            <button class="avatar" type="button" aria-label="用户菜单">J</button>
+          </div>
+        </header>
+
+        <div class="content-grid">
+          <section class="chat-column">
+            <div class="chat-feed" id="chat-feed" aria-live="polite"></div>
+
+            <section class="composer-card">
+              <textarea id="message-input" rows="2" placeholder="给 JobPilot 发送消息，或输入 / 选择指令"></textarea>
+              <div class="command-row">
+                <button type="button" data-command="分析我的简历">/ 分析简历</button>
+                <button type="button" data-command="针对这个岗位优化我的简历">/ 优化简历</button>
+                <button type="button" data-command="根据我的简历开始模拟面试">/ 开始面试</button>
+                <button type="button" data-command="查看我的面试薄弱点">/ 薄弱点</button>
+              </div>
+              <div class="composer-actions">
+                <div>
+                  <button class="mini-button" id="attachment-button" type="button" title="上传 PDF 简历" aria-label="上传 PDF 简历">⌕</button>
+                  <input id="resume-file" type="file" accept="application/pdf,.pdf" hidden />
+                  <button class="context-button" id="context-button" type="button">＠ 上下文</button>
+                  <button class="context-button" id="inline-agent" type="button">✦ <span>Supervisor</span>⌄</button>
+                </div>
+                <div>
+                  <button class="mini-button" id="voice-button" type="button" title="语音输入">♩</button>
+                  <button class="send-button" id="send-button" type="button" aria-label="发送消息">➤</button>
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <aside class="right-panel">
+            <section class="panel-card current-agent-card">
+              <div class="card-heading"><h2>当前 Agent</h2><button id="side-switch" type="button">切换</button></div>
+              <div class="current-agent">
+                <span class="agent-icon green" id="current-agent-icon">✦</span>
+                <div><strong id="current-agent-name">Supervisor</strong><span><i></i>在线</span></div>
+              </div>
+              <p id="current-agent-description">理解需求、选择专业 Agent，并组合任务结果</p>
+              <button class="details-button" id="details-button" type="button">查看详情</button>
+            </section>
+
+            <section class="panel-card team-card">
+              <h2>Agent 团队</h2>
+              <button class="team-member" type="button" data-agent="job">
+                <span class="agent-icon green">◇</span><span><strong>Job Analyst</strong><small>岗位解析与匹配分析</small></span>
+              </button>
+              <button class="team-member" type="button" data-agent="resume">
+                <span class="agent-icon blue">▤</span><span><strong>Resume Expert</strong><small>简历解析与优化专家</small></span>
+              </button>
+              <button class="team-member" type="button" data-agent="interview">
+                <span class="agent-icon orange">◎</span><span><strong>Interview Coach</strong><small>面试准备与模拟专家</small></span>
+              </button>
+            </section>
+
+            <section class="panel-card usage-card">
+              <h2>今日使用情况</h2>
+              <div class="usage-item"><span>对话次数 <b id="conversation-count">0 / 50</b></span><i><em style="width: 12%"></em></i></div>
+              <div class="usage-item green-bar"><span>简历操作 <b id="resume-count">0 / 20</b></span><i><em style="width: 0%"></em></i></div>
+              <div class="usage-item orange-bar"><span>面试轮次 <b id="interview-count">0</b></span><i><em style="width: 0%"></em></i></div>
+            </section>
+          </aside>
+        </div>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="context-modal" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="context-title">
+        <div class="modal-header"><div><h2 id="context-title">任务上下文</h2><p>这些 ID 会原样发送给业务 Agent</p></div><button id="close-context" type="button">×</button></div>
+        <div class="context-grid">
+          <label>用户 ID<input id="user-id" type="number" min="1" value="1" /></label>
+          <label>岗位 ID<input id="job-id" type="number" min="1" placeholder="例如 1" /></label>
+          <label>简历 ID<input id="resume-id" type="number" min="1" placeholder="可选" /></label>
+          <label>面试 ID<input id="interview-id" type="number" min="1" placeholder="开始面试后自动填写" /></label>
+          <label class="wide">当前问题 ID<input id="question-id" type="text" placeholder="例如 q1，开始面试后自动填写" /></label>
+        </div>
+        <div class="modal-actions"><button id="cancel-context" type="button">取消</button><button id="save-context" type="button">保存上下文</button></div>
+      </section>
+    </div>
+
+    <template id="assistant-message-template">
+      <article class="message assistant-message">
+        <span class="robot-logo message-logo" aria-hidden="true"><i></i><b></b></span>
+        <div class="message-body">
+          <div class="message-meta"><strong>JobPilot AI</strong><time></time></div>
+          <div class="message-content"></div>
+          <div class="message-toolbar">
+            <button type="button" data-tool="copy">▢ 复制</button>
+            <button type="button" data-tool="retry">↻ 再试一次</button>
+            <button type="button">⌘ 继续深入</button>
+            <button type="button">⌁ 总结要点</button>
+            <span></span><button type="button" aria-label="赞">♧</button><button type="button" aria-label="踩">♤</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/ui/app.js" defer></script>
+  </body>
+</html>

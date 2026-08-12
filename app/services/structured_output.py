@@ -1,5 +1,6 @@
 """LLM 结构化输出服务的共享校验流程。"""
 
+import json
 import logging
 from typing import TypeVar
 
@@ -26,10 +27,56 @@ async def generate_structured_output(
     user_prompt: str,
     schema: type[ModelT],
     log_context: str,
+    validation_retries: int = 0,
 ) -> ModelT:
     """调用 LLM 并统一完成错误映射与 Pydantic Schema 校验。"""
+    current_user_prompt = user_prompt
+    validation_error: ValidationError | None = None
+    for attempt in range(validation_retries + 1):
+        structured_data = await _request_json(
+            llm_client=llm_client,
+            system_prompt=system_prompt,
+            user_prompt=current_user_prompt,
+        )
+        try:
+            return schema.model_validate(structured_data)
+        except ValidationError as exc:
+            validation_error = exc
+            errors = [
+                {
+                    "location": ".".join(str(part) for part in error["loc"]),
+                    "type": error["type"],
+                }
+                for error in exc.errors(include_url=False, include_input=False)
+            ]
+            logger.warning(
+                "LLM 结构化输出校验失败 context=%s attempt=%s errors=%s",
+                log_context,
+                attempt + 1,
+                errors,
+            )
+            if attempt < validation_retries:
+                current_user_prompt = (
+                    f"{user_prompt}\n\n上一次 JSON 未通过校验，请按 Schema 完整重写。"
+                    f"错误字段：{json.dumps(errors, ensure_ascii=False)}"
+                )
+
+    raise AppException(
+        "LLM output failed schema validation",
+        code=50202,
+        status_code=502,
+    ) from validation_error
+
+
+async def _request_json(
+    *,
+    llm_client: JSONGenerator,
+    system_prompt: str,
+    user_prompt: str,
+) -> dict[str, object]:
+    """统一映射一次 LLM 网络和协议错误。"""
     try:
-        structured_data = await llm_client.generate_json(
+        return await llm_client.generate_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
@@ -55,19 +102,5 @@ async def generate_structured_output(
         raise AppException(
             "LLM service request failed",
             code=50201,
-            status_code=502,
-        ) from exc
-
-    try:
-        return schema.model_validate(structured_data)
-    except ValidationError as exc:
-        logger.warning(
-            "LLM 结构化输出校验失败 context=%s error_count=%s",
-            log_context,
-            exc.error_count(),
-        )
-        raise AppException(
-            "LLM output failed schema validation",
-            code=50202,
             status_code=502,
         ) from exc

@@ -27,6 +27,14 @@ class ProfileRepository:
         )
         return (await self._session.execute(statement)).scalar_one_or_none()
 
+    async def get_by_id(self, profile_id: int, *, user_id: int) -> CandidateProfile | None:
+        """按用户边界读取指定版本 Profile，供进行中的面试保持上下文一致。"""
+        statement = select(CandidateProfile).where(
+            CandidateProfile.id == profile_id,
+            CandidateProfile.user_id == user_id,
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
     async def create_current(
         self,
         *,

@@ -228,14 +228,14 @@ class StubMatchService:
 
 
 def test_metadata_contains_stage5_tables() -> None:
-    """ORM Metadata 应包含阶段 5 的五张独立业务表。"""
-    assert set(Base.metadata.tables) == {
+    """后续阶段增加表时，阶段 5 的五张业务表仍必须保留。"""
+    assert {
         "users",
         "resumes",
         "candidate_profiles",
         "jobs",
         "job_analyses",
-    }
+    }.issubset(Base.metadata.tables)
 
 
 def test_persistence_routes_are_registered() -> None:

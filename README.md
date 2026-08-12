@@ -228,6 +228,76 @@ get_candidate_profile
 `jd_text` 之一。LLM 不输出分数或排名，最终推荐岗位由 Python Rule Engine 的匹配
 分数确定。
 
+## 无限轮次自适应面试
+
+阶段 10 通过 `POST /users/{user_id}/interviews` 使用历史 `job_id` 启动面试。
+第一题来自当前 Profile 绑定的结构化简历：
+
+```json
+{"job_id": 1}
+```
+
+使用 `POST /users/{user_id}/interviews/{interview_id}/answers` 回答当前题目：
+
+```json
+{
+  "question_id": "q1",
+  "answer": "这里填写用户答案"
+}
+```
+
+系统会返回具体错误、改进建议和正确答案。答案为 `incorrect` 或 `partial` 时，下一题
+针对本次回答继续追问；达到 `mastered` 时，下一题转向尚未充分考察的 JD 内容。
+面试不设置题数和轮次上限，每轮题目、用户答案、评价和正确答案都保存到 MySQL。
+`GET /users/{user_id}/interviews/{interview_id}` 返回完整问答汇总。
+
+## Supervisor、Resume 与 Interview Agent
+
+统一入口为 `POST /users/{user_id}/supervisor`。Supervisor 只识别意图、选择领域
+Agent、转交原始 payload 并组合结果，不调用 Repository 或具体业务 Service。
+
+查看当前 Profile：
+
+```json
+{
+  "message": "查看我的候选人画像",
+  "payload": {}
+}
+```
+
+开始面试：
+
+```json
+{
+  "message": "根据我的简历开始模拟面试",
+  "payload": {"job_id": 1}
+}
+```
+
+提交面试答案：
+
+```json
+{
+  "message": "这是我对当前问题的回答，请评价并继续提问",
+  "payload": {
+    "interview_id": 1,
+    "question_id": "q1",
+    "answer": "用户回答"
+  }
+}
+```
+
+Resume Agent 提供 `get_resume`、`get_profile`、`update_profile` 和
+`optimize_resume`；Interview Agent 提供 `create_interview_plan`、
+`generate_questions`、`evaluate_answer` 和 `get_weak_points`。业务 ID 和答案由 API
+payload 原样传递，Supervisor 模型不能查看或改写这些参数。
+
+## Web 界面
+
+FastAPI 同时托管 JobPilot 前端。启动服务后访问 `http://127.0.0.1:8000/`，系统会
+自动进入 `/ui/`。界面包含聊天、Agent 切换、最近对话、简历快捷操作、无限轮面试、
+上下文 ID 设置、使用统计、暗色主题和移动端布局，不需要单独启动 Node 服务。
+
 完整表结构与初始化说明见 [DATABASE.md](DATABASE.md)。
 
 ## 质量检查
