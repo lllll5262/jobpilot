@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     resume_max_file_size_mb: int = Field(default=10, gt=0, le=50)
     resume_max_pages: int = Field(default=20, gt=0, le=100)
     resume_max_text_chars: int = Field(default=50_000, gt=0, le=200_000)
+    database_url: SecretStr = SecretStr(
+        "mysql+aiomysql://root:password@127.0.0.1:3306/jobpilot?charset=utf8mb4"
+    )
+    database_echo: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.schemas.common import ApiResponse
@@ -89,6 +90,22 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=exc.status_code,
             code=exc.status_code,
             message=message,
+        )
+
+    @app.exception_handler(SQLAlchemyError)
+    async def handle_database_exception(request: Request, exc: SQLAlchemyError) -> JSONResponse:
+        # 数据库异常仅记录类型，不输出连接串、SQL 参数或凭据。
+        logger.exception(
+            "数据库操作失败 method=%s path=%s error_type=%s",
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+            exc_info=exc,
+        )
+        return _error_response(
+            status_code=503,
+            code=50310,
+            message="database service unavailable",
         )
 
     @app.exception_handler(Exception)

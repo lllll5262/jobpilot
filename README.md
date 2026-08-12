@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 4 首次组合 Resume、Candidate Profile 和 JD，形成岗位匹配闭环。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 5 使用 MySQL 持久化用户、Resume、Candidate Profile、JD 和岗位分析结果。
 
 ## 环境要求
 
@@ -23,6 +23,7 @@ uvicorn app.main:app --reload
 - 简历解析：`POST http://127.0.0.1:8000/resumes/parse`
 - 能力画像：`POST http://127.0.0.1:8000/profiles/build`
 - 岗位匹配：`POST http://127.0.0.1:8000/matches/evaluate`
+- 持久化工作流：见下方“数据库持久化”
 - OpenAPI 文档：`http://127.0.0.1:8000/docs`
 
 健康检查响应：
@@ -104,6 +105,29 @@ Resume 保存候选人做过的教育、项目和实习经历；Candidate Profil
 
 推荐阈值为：80 分及以上 `RECOMMEND`，60～79 分 `CONSIDER`，低于 60 分 `NOT_RECOMMEND`。最终分数不接受 LLM 直接输入。
 
+## 数据库持久化
+
+复制 `.env.example` 后配置 `JOBPILOT_DATABASE_URL`，并将初始化脚本导入 MySQL：
+
+```powershell
+Get-Content "database/jobpilot_schema.sql" -Raw | mysql -h <mysql-host> -P <mysql-port> -u <mysql-user> -p
+```
+
+表初始化完成后，应用通过 SQLAlchemy 和 aiomysql 直接执行日常增删改查，不需要运行数据库迁移命令。
+
+持久化接口：
+
+- `POST /users`：创建用户
+- `POST /users/{user_id}/resumes/parse`：解析并保存 Resume
+- `POST /users/{user_id}/profiles/build`：构建并保存当前 Profile
+- `GET /users/{user_id}/profile`：查看当前 Profile
+- `POST /users/{user_id}/jobs/parse`：解析并保存 JD
+- `GET /users/{user_id}/jobs`：查看历史 JD
+- `POST /users/{user_id}/job-analyses`：匹配并保存分析
+- `GET /users/{user_id}/job-analyses`：查看历史岗位分析
+
+完整表结构与初始化说明见 [DATABASE.md](DATABASE.md)。
+
 ## 质量检查
 
 ```powershell
@@ -117,8 +141,11 @@ ruff check .
 app/
 ├── api/            # HTTP 路由
 ├── core/           # 配置、日志和异常处理
+├── db/             # SQLAlchemy Async Engine 与 ORM Base
 ├── llm/            # OpenAI-compatible 客户端与 Prompt
+├── models/         # SQLAlchemy ORM Model
 ├── parsers/        # PDF 等原始文档解析器
+├── repository/     # 数据访问层
 ├── rules/          # 确定性的技能、学历和算分规则
 ├── schemas/        # Pydantic 数据模型
 ├── services/       # 应用服务
