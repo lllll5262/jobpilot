@@ -19,6 +19,7 @@ from app.memory.connection import get_redis_client
 from app.memory.conversation_memory import ConversationMemory
 from app.memory.session_store import AnalysisContextCache, SessionStore
 from app.schemas.agent import (
+    JobAgentComparisonResponse,
     JobAgentRequest,
     JobAgentResponse,
     JobAgentSessionRequest,
@@ -26,7 +27,10 @@ from app.schemas.agent import (
     JobAgentSessionState,
 )
 from app.schemas.common import ApiResponse
+from app.schemas.comparison import JobComparisonRequest
 from app.services.analysis_storage_service import AnalysisStorageService
+from app.services.gap_analysis_service import GapAnalysisService
+from app.services.job_compare_service import JobCompareService
 from app.services.job_storage_service import JobStorageService
 from app.services.profile_storage_service import ProfileStorageService
 from app.services.session_service import SessionService
@@ -74,6 +78,45 @@ def get_session_job_agent(
     )
 
 
+def get_gap_analysis_service(
+    model: Annotated[OpenAICompatibleClient, Depends(get_llm_client)],
+) -> GapAnalysisService:
+    """组装只负责语义差距说明的 Service。"""
+    return GapAnalysisService(model)
+
+
+def get_job_compare_service(
+    job_service: Annotated[JobStorageService, Depends(get_job_storage_service)],
+    analysis_service: Annotated[AnalysisStorageService, Depends(get_analysis_storage_service)],
+    gap_service: Annotated[GapAnalysisService, Depends(get_gap_analysis_service)],
+) -> JobCompareService:
+    """组装历史 JD、规则匹配和差距分析编排服务。"""
+    return JobCompareService(
+        job_service=job_service,
+        analysis_service=analysis_service,
+        gap_analysis_service=gap_service,
+    )
+
+
+def get_comparison_job_agent(
+    user_id: Annotated[int, Path(gt=0)],
+    model: Annotated[OpenAICompatibleClient, Depends(get_llm_client)],
+    profile_service: Annotated[ProfileStorageService, Depends(get_profile_storage_service)],
+    job_service: Annotated[JobStorageService, Depends(get_job_storage_service)],
+    analysis_service: Annotated[AnalysisStorageService, Depends(get_analysis_storage_service)],
+    compare_service: Annotated[JobCompareService, Depends(get_job_compare_service)],
+) -> JobAgent:
+    """组装带 compare_jobs Tool 的 Job Agent。"""
+    return JobAgent(
+        model=model,
+        user_id=user_id,
+        profile_service=profile_service,
+        job_service=job_service,
+        analysis_service=analysis_service,
+        job_compare_service=compare_service,
+    )
+
+
 def get_session_service(
     client: Annotated[Redis, Depends(get_redis_client)],
     settings: Annotated[Settings, Depends(get_settings)],
@@ -103,6 +146,18 @@ async def analyze_job_with_agent(
 ) -> ApiResponse[JobAgentResponse]:
     """让 Job Agent 调用工具完成一次岗位分析并保存结果。"""
     return ApiResponse(data=await agent.analyze(request))
+
+
+@router.post(
+    "/users/{user_id}/agents/job/compare",
+    response_model=ApiResponse[JobAgentComparisonResponse],
+)
+async def compare_jobs_with_agent(
+    request: JobComparisonRequest,
+    agent: Annotated[JobAgent, Depends(get_comparison_job_agent)],
+) -> ApiResponse[JobAgentComparisonResponse]:
+    """比较历史或新粘贴岗位，并返回技能差距与确定性排名。"""
+    return ApiResponse(data=await agent.compare(request))
 
 
 @router.post(

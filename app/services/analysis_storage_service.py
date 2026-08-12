@@ -42,10 +42,26 @@ class AnalysisStorageService:
 
     async def calculate(self, *, user_id: int, job_id: int) -> AnalysisDraft:
         """加载当前 Profile 和 Resume 并计算匹配，但不写数据库。"""
+        return (await self.calculate_many(user_id=user_id, job_ids=[job_id]))[0]
+
+    async def calculate_many(
+        self,
+        *,
+        user_id: int,
+        job_ids: list[int],
+    ) -> list[AnalysisDraft]:
+        """只加载一次候选人上下文，依次计算多个历史岗位。"""
         await require_user(self._user_repository, user_id)
-        job_record = await self._job_repository.get_by_id(job_id, user_id=user_id)
-        if job_record is None:
-            raise AppException("Job not found", code=40404, status_code=404)
+        job_records = await self._job_repository.get_by_ids(job_ids, user_id=user_id)
+        jobs_by_id = {record.id: record for record in job_records}
+        missing_ids = [job_id for job_id in job_ids if job_id not in jobs_by_id]
+        if missing_ids:
+            raise AppException(
+                "One or more jobs were not found",
+                code=40404,
+                status_code=404,
+                data={"missing_job_ids": missing_ids},
+            )
         profile_record = await self._profile_repository.get_current(user_id)
         if profile_record is None:
             raise AppException("Current profile not found", code=40403, status_code=404)
@@ -56,18 +72,26 @@ class AnalysisStorageService:
         if resume_record is None:
             raise AppException("Resume not found", code=40402, status_code=404)
 
-        result = await self._match_service.match(
-            resume=ResumeParseResult.model_validate(resume_record.parsed_data),
-            profile=CandidateProfile.model_validate(profile_record.profile_data),
-            job=JDParseResult.model_validate(job_record.parsed_data),
-        )
-        return AnalysisDraft(
-            user_id=user_id,
-            resume_id=resume_record.id,
-            profile_id=profile_record.id,
-            job_id=job_record.id,
-            result=result,
-        )
+        resume = ResumeParseResult.model_validate(resume_record.parsed_data)
+        profile = CandidateProfile.model_validate(profile_record.profile_data)
+        drafts: list[AnalysisDraft] = []
+        for job_id in job_ids:
+            job_record = jobs_by_id[job_id]
+            result = await self._match_service.match(
+                resume=resume,
+                profile=profile,
+                job=JDParseResult.model_validate(job_record.parsed_data),
+            )
+            drafts.append(
+                AnalysisDraft(
+                    user_id=user_id,
+                    resume_id=resume_record.id,
+                    profile_id=profile_record.id,
+                    job_id=job_record.id,
+                    result=result,
+                )
+            )
+        return drafts
 
     async def save(self, draft: AnalysisDraft) -> AnalysisRecord:
         """保存已经完成计算且通过 Pydantic 校验的分析草稿。"""

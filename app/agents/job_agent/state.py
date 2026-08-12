@@ -14,6 +14,8 @@ class JobAgentState(TypedDict):
     user_id: int
     jd_text: str | None
     requires_analysis: bool
+    requires_comparison: bool
+    comparison_sources: list[dict[str, Any]]
     analysis_context: list[dict[str, Any]]
     session_id: NotRequired[str]
     turn: NotRequired[int]
@@ -21,4 +23,5 @@ class JobAgentState(TypedDict):
     job: NotRequired[dict[str, Any]]
     match_draft: NotRequired[dict[str, Any]]
     analysis: NotRequired[dict[str, Any]]
+    comparison: NotRequired[dict[str, Any]]
     final_answer: NotRequired[str]

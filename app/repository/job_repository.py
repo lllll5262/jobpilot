@@ -19,6 +19,13 @@ class JobRepository:
         statement = select(Job).where(Job.id == job_id, Job.user_id == user_id)
         return (await self._session.execute(statement)).scalar_one_or_none()
 
+    async def get_by_ids(self, job_ids: list[int], *, user_id: int) -> list[Job]:
+        """一次查询当前用户的多个指定 JD。"""
+        if not job_ids:
+            return []
+        statement = select(Job).where(Job.id.in_(job_ids), Job.user_id == user_id)
+        return list((await self._session.execute(statement)).scalars().all())
+
     async def list_by_user(
         self,
         user_id: int,

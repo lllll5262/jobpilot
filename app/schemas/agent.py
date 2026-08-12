@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.comparison import JobComparisonResult
 from app.schemas.persistence import AnalysisRecord, JobRecord
 
 JobAgentToolName = Literal[
@@ -12,6 +13,7 @@ JobAgentToolName = Literal[
     "parse_job_description",
     "calculate_job_match",
     "save_analysis",
+    "compare_jobs",
 ]
 
 
@@ -53,6 +55,14 @@ class JobAgentResponse(BaseModel):
     final_answer: str
     analysis: AnalysisRecord
     job: JobRecord
+    tool_trace: list[JobAgentToolName]
+
+
+class JobAgentComparisonResponse(BaseModel):
+    """Agent 最终回答以及确定性的结构化岗位排名。"""
+
+    final_answer: str
+    comparison: JobComparisonResult
     tool_trace: list[JobAgentToolName]
 
 

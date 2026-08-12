@@ -12,7 +12,7 @@ from app.llm.client import ToolCallingModel
 from app.schemas.agent import JobAgentToolName
 from app.tools.base import AgentExecutionError, BaseAgentTool
 
-TOOL_ORDER: tuple[JobAgentToolName, ...] = (
+ANALYSIS_TOOL_ORDER: tuple[JobAgentToolName, ...] = (
     "get_candidate_profile",
     "parse_job_description",
     "calculate_job_match",
@@ -32,7 +32,10 @@ class JobAgentGraph:
     ) -> None:
         self._model = model
         self._tools = {tool.name: tool for tool in tools}
-        if set(self._tools) != set(TOOL_ORDER):
+        analysis_tools = set(ANALYSIS_TOOL_ORDER)
+        optional_tools = {"compare_jobs"}
+        unexpected_tools = set(self._tools) - analysis_tools - optional_tools
+        if not analysis_tools.issubset(self._tools) or unexpected_tools:
             raise ValueError("Job Agent tools are incomplete")
 
         builder = StateGraph(JobAgentState)
@@ -143,6 +146,10 @@ class JobAgentGraph:
     @staticmethod
     def _next_required_tool(state: JobAgentState) -> JobAgentToolName | None:
         """依据领域状态确定唯一合法的下一步工具。"""
+        if state["requires_comparison"]:
+            if not state.get("profile"):
+                return "get_candidate_profile"
+            return None if state.get("comparison") else "compare_jobs"
         if not state["requires_analysis"]:
             return None
         if not state.get("profile"):

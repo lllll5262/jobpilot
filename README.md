@@ -179,6 +179,55 @@ jobpilot:checkpoint:*   # LangGraph 执行状态
 
 当前实现使用 `redis-py asyncio` 和普通 Redis 命令实现 LangGraph Checkpointer，不要求 RedisJSON 或 RediSearch。MySQL 仍是用户、简历、Profile、岗位和分析结果的唯一事实来源；Redis 数据均设置 TTL。
 
+## 多岗位对比与技能差距
+
+阶段 8 新增 `POST /users/{user_id}/agents/job/compare`。比较前可通过
+`GET /users/{user_id}/jobs` 查询历史 JD ID，也可以在比较请求中直接粘贴新 JD。
+新粘贴的 JD 会复用现有解析流程并保存到历史记录。
+
+比较流程固定为：
+
+```text
+get_candidate_profile
+  → compare_jobs
+      → 读取或解析 2～5 个 JD
+      → 分别调用 MatchService
+      → Python 按规则分数排序
+      → LLM 生成技能差距与推荐理由
+  → Final Answer
+```
+
+历史 JD 对比请求示例：
+
+```json
+{
+  "message": "帮我比较一下字节和美团这两个 Java 实习岗位，哪个更适合我？",
+  "jobs": [
+    {"job_id": 1, "label": "字节"},
+    {"job_id": 2, "label": "美团"}
+  ]
+}
+```
+
+混合历史 JD 与新粘贴 JD：
+
+```json
+{
+  "message": "比较这两个岗位",
+  "jobs": [
+    {"job_id": 1, "label": "字节"},
+    {
+      "jd_text": "美团 Java 后端实习生，要求熟悉 Java、Redis、Kafka……",
+      "label": "美团"
+    }
+  ]
+}
+```
+
+`label` 用于展示公司或岗位别名，可以省略。每个元素必须且只能提供 `job_id` 或
+`jd_text` 之一。LLM 不输出分数或排名，最终推荐岗位由 Python Rule Engine 的匹配
+分数确定。
+
 完整表结构与初始化说明见 [DATABASE.md](DATABASE.md)。
 
 ## 质量检查

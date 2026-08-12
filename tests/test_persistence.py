@@ -162,6 +162,11 @@ class FakeJobRepository:
             return self.record
         return None
 
+    async def get_by_ids(self, job_ids: list[int], *, user_id: int) -> list[Any]:
+        """模拟阶段 8 多岗位批量读取。"""
+        record = await self.get_by_id(job_ids[0], user_id=user_id) if job_ids else None
+        return [record] if record is not None and record.id in job_ids else []
+
     async def list_by_user(self, user_id: int, *, limit: int, offset: int) -> list[Any]:
         records = [self.record] if self.record and self.record.user_id == user_id else []
         return records[offset : offset + limit]
