@@ -282,7 +282,13 @@ class SupervisorGraph:
     async def _delegate_interview(self, state: SupervisorState) -> dict[str, Any]:
         """将面试动作交给 Interview Agent。"""
         route = state["route"]
-        payload = dict(state["payload"])
+        # 浏览器会保留多个 Agent 的上下文 ID。Supervisor 只把 Interview Agent
+        # 协议允许的参数向下传递，避免 resume_id 等跨领域参数触发严格 Schema 校验。
+        payload = {
+            key: value
+            for key, value in state["payload"].items()
+            if key in {"job_id", "interview_id", "question_id", "answer", "jd_text"}
+        }
         preparation_trace: list[str] = []
         if route.action == InterviewAgentAction.CREATE_INTERVIEW_PLAN:
             payload, preparation_trace, missing = await self._ensure_job_context(

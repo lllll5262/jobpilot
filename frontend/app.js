@@ -178,7 +178,13 @@ function buildPayload(message) {
   const looksLikeJd = message.length >= 60 && /(岗位职责|工作职责|任职要求|职位要求|岗位要求|工作内容|技能要求|职位描述|学历|经验|优先|熟悉|掌握)/i.test(message);
   if (looksLikeJd) payload.jd_text = message;
   if (state.context.jobId && /(岗位|面试|优化|jd)/i.test(lower)) payload.job_id = state.context.jobId;
-  if (state.context.resumeId && /(简历|画像|profile|优化)/i.test(lower)) payload.resume_id = state.context.resumeId;
+  // 面试服务始终使用当前 Profile 绑定的简历，不接收 resume_id。只有 Resume Agent
+  // 请求才附带该字段，避免“根据我的简历开始面试”把跨领域参数传给 Interview Agent。
+  if (
+    state.context.resumeId &&
+    /(简历|画像|profile|优化)/i.test(lower) &&
+    !/(面试|interview)/i.test(lower)
+  ) payload.resume_id = state.context.resumeId;
   const isInterviewCommand = /(薄弱|查看|开始|创建|生成题|当前题)/i.test(lower);
   const isActiveAnswer = Boolean(
     state.context.interviewId &&

@@ -154,6 +154,23 @@ def test_supervisor_routes_and_preserves_trusted_payload() -> None:
     assert interview_agent.payload == payload
 
 
+def test_supervisor_drops_resume_id_before_interview_dispatch() -> None:
+    """前端共享上下文中的 Resume ID 不应污染 Interview Agent 参数。"""
+    supervisor, _, interview_agent = build_supervisor()
+    result = asyncio.run(
+        supervisor.handle(
+            SupervisorRequest(
+                message="根据我的简历开始模拟面试",
+                payload={"job_id": 30, "resume_id": 3},
+            )
+        )
+    )
+
+    assert result.target_agent == "interview"
+    assert result.action == "create_interview_plan"
+    assert interview_agent.payload == {"job_id": 30}
+
+
 def test_supervisor_endpoint_returns_unified_response() -> None:
     """统一入口应组合领域 Agent 结果并保留调用轨迹。"""
     supervisor, _, _ = build_supervisor()
