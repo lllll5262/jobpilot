@@ -1,0 +1,15 @@
+# 本地环境变量可能包含敏感信息，不进入版本库。
+.env
+
+# Python 虚拟环境与缓存。
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# IDE 与操作系统文件。
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
