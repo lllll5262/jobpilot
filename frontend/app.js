@@ -6,13 +6,12 @@ const state = {
   context: { userId: 1, jobId: null, resumeId: null, interviewId: null, questionId: null },
   usage: { conversations: 0, resumes: 0, interviews: 0 },
   optimization: { tab: "history", selectedJobId: null, jobs: [] },
-  recents: [
-    ["帮我分析一下这个岗位适不适合我", "刚刚"],
-    ["Java 后端实习面试题生成", "昨天"],
-    ["我的简历可以优化哪些地方", "2 天前"],
-    ["Redis 和 MySQL 知识点总结", "4 天前"],
-  ],
+  conversations: [],
+  activeConversationId: null,
 };
+
+const CONVERSATION_STORAGE_KEY = "jobpilot-conversations-v1";
+const MAX_LOCAL_CONVERSATIONS = 20;
 
 const agentInfo = {
   supervisor: { name: "Supervisor", title: "JobPilot AI 助手", icon: "✦", color: "green", description: "理解需求、选择专业 Agent，并组合任务结果" },
@@ -34,11 +33,110 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
 
+function conversationTime(updatedAt) {
+  const elapsed = Date.now() - Number(updatedAt || 0);
+  if (elapsed < 60_000) return "刚刚";
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} 分钟前`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} 小时前`;
+  if (elapsed < 172_800_000) return "昨天";
+  return `${Math.floor(elapsed / 86_400_000)} 天前`;
+}
+
 function renderRecents() {
-  $("#recent-list").innerHTML = state.recents.map(([title, time], index) => `
-    <button class="recent-chat ${index === 0 ? "active" : ""}" type="button">
-      <span>›</span><strong>${escapeHtml(title)}</strong><time>${time}</time>
+  const conversations = [...state.conversations].sort((left, right) => right.updatedAt - left.updatedAt);
+  $("#recent-list").innerHTML = conversations.map((conversation) => `
+    <button class="recent-chat ${conversation.id === state.activeConversationId ? "active" : ""}" type="button" data-conversation-id="${escapeHtml(conversation.id)}">
+      <span>›</span><strong>${escapeHtml(conversation.title)}</strong><time>${conversationTime(conversation.updatedAt)}</time>
     </button>`).join("");
+}
+
+function activeConversation() {
+  return state.conversations.find((conversation) => conversation.id === state.activeConversationId);
+}
+
+function persistConversations() {
+  const ordered = [...state.conversations]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, MAX_LOCAL_CONVERSATIONS);
+  state.conversations = ordered;
+  localStorage.setItem(CONVERSATION_STORAGE_KEY, JSON.stringify(ordered));
+}
+
+function saveActiveConversation() {
+  const conversation = activeConversation();
+  if (!conversation) return;
+  conversation.messagesHtml = feed.innerHTML;
+  conversation.context = { ...state.context };
+  conversation.agent = state.agent;
+  conversation.preferredAgent = state.preferredAgent;
+  conversation.lastMessage = state.lastMessage;
+  persistConversations();
+}
+
+function touchActiveConversation(title) {
+  const conversation = activeConversation();
+  if (!conversation) return;
+  if (conversation.title === "新对话" && title) {
+    conversation.title = title.replace(/\s+/g, " ").trim().slice(0, 36);
+  }
+  conversation.updatedAt = Date.now();
+}
+
+function createConversation() {
+  saveActiveConversation();
+  const previousContext = state.context;
+  const conversation = {
+    id: globalThis.crypto?.randomUUID?.() || `conversation-${Date.now()}`,
+    title: "新对话",
+    updatedAt: Date.now(),
+    messagesHtml: "",
+    context: {
+      userId: previousContext.userId || 1,
+      resumeId: previousContext.resumeId || null,
+      jobId: null,
+      interviewId: null,
+      questionId: null,
+    },
+    agent: "supervisor",
+    preferredAgent: null,
+    lastMessage: "",
+  };
+  state.conversations.unshift(conversation);
+  state.activeConversationId = conversation.id;
+  state.context = { ...conversation.context };
+  state.preferredAgent = null;
+  state.lastMessage = "";
+  setAgent("supervisor");
+  welcome();
+  conversation.messagesHtml = feed.innerHTML;
+  persistConversations();
+  localStorage.setItem("jobpilot-context", JSON.stringify(state.context));
+  renderRecents();
+  input.focus();
+}
+
+function openConversation(conversationId) {
+  if (state.loading || conversationId === state.activeConversationId) return;
+  saveActiveConversation();
+  const conversation = state.conversations.find((item) => item.id === conversationId);
+  if (!conversation) return;
+  state.activeConversationId = conversation.id;
+  state.context = {
+    userId: 1,
+    jobId: null,
+    resumeId: null,
+    interviewId: null,
+    questionId: null,
+    ...conversation.context,
+  };
+  state.preferredAgent = conversation.preferredAgent || null;
+  state.lastMessage = conversation.lastMessage || "";
+  feed.innerHTML = conversation.messagesHtml || "";
+  setAgent(conversation.agent || "supervisor");
+  if (!feed.children.length) welcome();
+  localStorage.setItem("jobpilot-context", JSON.stringify(state.context));
+  renderRecents();
+  scrollToBottom();
 }
 
 function addUserMessage(text) {
@@ -93,6 +191,7 @@ function saveContext() {
     questionId: $("#question-id").value.trim() || null,
   };
   localStorage.setItem("jobpilot-context", JSON.stringify(state.context));
+  saveActiveConversation();
   closeContext();
 }
 
@@ -235,6 +334,7 @@ async function uploadResume(file) {
   }
 
   addUserMessage(`上传简历：${file.name}`);
+  touchActiveConversation(`上传简历：${file.name}`);
   const loadingCard = addAssistantMessage('<p>正在解析并保存简历，然后更新候选人画像…</p><span class="typing-dots"><i></i><i></i><i></i></span>', { loading: true });
   setLoading(true);
   try {
@@ -273,6 +373,8 @@ async function uploadResume(file) {
   } catch (error) {
     loadingCard.querySelector(".message-content").innerHTML = `<p><strong>简历上传失败</strong></p><p>${escapeHtml(error.message)}</p>`;
   } finally {
+    saveActiveConversation();
+    renderRecents();
     setLoading(false);
     $("#resume-file").value = "";
   }
@@ -347,6 +449,7 @@ async function sendMessage(forcedMessage) {
   const message = (forcedMessage || input.value).trim();
   if (!message || state.loading) return;
   state.lastMessage = message;
+  touchActiveConversation(message);
   input.value = "";
   addUserMessage(message);
   const loadingCard = addAssistantMessage('<span class="typing-dots"><i></i><i></i><i></i></span>', { loading: true });
@@ -367,12 +470,11 @@ async function sendMessage(forcedMessage) {
     if (data.target_agent === "resume") state.usage.resumes += 1;
     if (data.target_agent === "interview") state.usage.interviews += 1;
     updateUsage();
-    state.recents.unshift([message, "刚刚"]);
-    state.recents = state.recents.slice(0, 5);
-    renderRecents();
   } catch (error) {
     loadingCard.querySelector(".message-content").innerHTML = `<p><strong>暂时无法完成请求</strong></p><p>${escapeHtml(error.message)}</p><p style="color:#7b8499">请检查服务是否启动、上下文 ID 是否填写正确，然后重试。</p>`;
   } finally {
+    saveActiveConversation();
+    renderRecents();
     setLoading(false);
     input.focus();
   }
@@ -412,7 +514,11 @@ function bindEvents() {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendMessage(); }
   });
   $$("[data-command]").forEach((button) => button.addEventListener("click", () => { input.value = button.dataset.command; input.focus(); }));
-  $("#new-chat").addEventListener("click", welcome);
+  $("#new-chat").addEventListener("click", createConversation);
+  $("#recent-list").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-conversation-id]");
+    if (button) openConversation(button.dataset.conversationId);
+  });
   $("#agent-switch").addEventListener("click", () => $("#agent-menu").classList.toggle("open"));
   $("#side-switch").addEventListener("click", () => $("#agent-menu").classList.toggle("open"));
   $$('[data-agent]').forEach((button) => button.addEventListener("click", () => setAgent(button.dataset.agent, true)));
@@ -444,7 +550,7 @@ function bindEvents() {
   }));
   $("#context-modal").addEventListener("click", (event) => { if (event.target.id === "context-modal") closeContext(); });
   document.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); welcome(); input.focus(); }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); createConversation(); }
     if (event.key === "Escape") { closeContext(); closeOptimization(); $("#agent-menu").classList.remove("open"); }
   });
   feed.addEventListener("click", async (event) => {
@@ -464,8 +570,27 @@ function init() {
   if (saved) {
     try { state.context = { ...state.context, ...JSON.parse(saved) }; } catch (_) { /* 忽略损坏的本地设置 */ }
   }
+  const savedConversations = localStorage.getItem(CONVERSATION_STORAGE_KEY);
+  if (savedConversations) {
+    try {
+      const parsed = JSON.parse(savedConversations);
+      if (Array.isArray(parsed)) state.conversations = parsed.filter((item) => item?.id && item?.title);
+    } catch (_) { /* 忽略损坏的本地会话记录 */ }
+  }
+  if (state.conversations.length) {
+    state.conversations.sort((left, right) => right.updatedAt - left.updatedAt);
+    state.activeConversationId = state.conversations[0].id;
+    const conversation = state.conversations[0];
+    state.context = { ...state.context, ...conversation.context };
+    state.preferredAgent = conversation.preferredAgent || null;
+    state.lastMessage = conversation.lastMessage || "";
+    feed.innerHTML = conversation.messagesHtml || "";
+    setAgent(conversation.agent || "supervisor");
+    if (!feed.children.length) welcome();
+  } else {
+    createConversation();
+  }
   renderRecents();
-  welcome();
   updateUsage();
   bindEvents();
 }

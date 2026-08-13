@@ -40,4 +40,7 @@ def test_frontend_assets_are_served() -> None:
     assert "/users/${state.context.userId}/profiles/build" in script.text
     assert "/users/${state.context.userId}/jobs?limit=50&offset=0" in script.text
     assert 'action === "optimize_resume"' in script.text
+    assert 'data-conversation-id="${escapeHtml(conversation.id)}"' in script.text
+    assert "openConversation(button.dataset.conversationId)" in script.text
+    assert 'localStorage.setItem(CONVERSATION_STORAGE_KEY' in script.text
     assert ".content-grid" in css.text
