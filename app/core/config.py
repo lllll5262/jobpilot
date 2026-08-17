@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     conversation_max_turns: int = Field(default=10, ge=1, le=50)
     agent_cache_ttl_seconds: int = Field(default=3_600, ge=60, le=86_400)
     checkpoint_ttl_seconds: int = Field(default=86_400, ge=300, le=2_592_000)
-    # MinIO 保存原始 PDF；MySQL 只保存对象地址、校验值和业务结构化数据。
+    # MinIO 保存原始 PDF 和结构化 Resume JSON；MySQL 只保存对象元数据。
     minio_endpoint: str = "127.0.0.1:9000"
     minio_access_key: SecretStr = SecretStr("")
     minio_secret_key: SecretStr = SecretStr("")

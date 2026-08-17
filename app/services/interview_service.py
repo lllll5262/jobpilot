@@ -25,9 +25,9 @@ from app.schemas.interview import (
 )
 from app.schemas.job import JDParseResult
 from app.schemas.profile import CandidateProfile
-from app.schemas.resume import ResumeParseResult
 from app.services.interview_evaluator import InterviewEvaluator
 from app.services.persistence_helpers import require_user
+from app.services.resume_content_service import ResumeContentService
 from app.services.structured_output import generate_structured_output
 
 
@@ -44,6 +44,7 @@ class InterviewService:
         profile_repository: ProfileRepository,
         resume_repository: ResumeRepository,
         user_repository: UserRepository,
+        resume_content_service: ResumeContentService,
     ) -> None:
         self._llm_client = llm_client
         self._evaluator = evaluator
@@ -52,6 +53,7 @@ class InterviewService:
         self._profile_repository = profile_repository
         self._resume_repository = resume_repository
         self._user_repository = user_repository
+        self._resume_content_service = resume_content_service
 
     async def start(
         self,
@@ -330,7 +332,7 @@ class InterviewService:
             "resume_record": resume_record,
             "job": JDParseResult.model_validate(job_record.parsed_data),
             "profile": CandidateProfile.model_validate(profile_record.profile_data),
-            "resume": ResumeParseResult.model_validate(resume_record.parsed_data),
+            "resume": await self._resume_content_service.load(resume_record),
         }
 
     @staticmethod

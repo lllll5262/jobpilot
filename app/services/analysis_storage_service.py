@@ -11,9 +11,9 @@ from app.schemas.job import JDParseResult
 from app.schemas.match import MatchResult
 from app.schemas.persistence import AnalysisDraft, AnalysisRecord
 from app.schemas.profile import CandidateProfile
-from app.schemas.resume import ResumeParseResult
 from app.services.match_service import MatchService
 from app.services.persistence_helpers import require_user
+from app.services.resume_content_service import ResumeContentService
 
 
 class AnalysisStorageService:
@@ -27,6 +27,7 @@ class AnalysisStorageService:
         profile_repository: ProfileRepository,
         resume_repository: ResumeRepository,
         user_repository: UserRepository,
+        resume_content_service: ResumeContentService,
     ) -> None:
         self._match_service = match_service
         self._analysis_repository = analysis_repository
@@ -34,6 +35,7 @@ class AnalysisStorageService:
         self._profile_repository = profile_repository
         self._resume_repository = resume_repository
         self._user_repository = user_repository
+        self._resume_content_service = resume_content_service
 
     async def analyze_and_save(self, *, user_id: int, job_id: int) -> AnalysisRecord:
         """兼容阶段 5 接口：依次计算并保存岗位分析。"""
@@ -72,7 +74,7 @@ class AnalysisStorageService:
         if resume_record is None:
             raise AppException("Resume not found", code=40402, status_code=404)
 
-        resume = ResumeParseResult.model_validate(resume_record.parsed_data)
+        resume = await self._resume_content_service.load(resume_record)
         profile = CandidateProfile.model_validate(profile_record.profile_data)
         drafts: list[AnalysisDraft] = []
         for job_id in job_ids:

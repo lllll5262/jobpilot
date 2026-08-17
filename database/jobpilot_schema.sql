@@ -17,7 +17,7 @@ CREATE TABLE `users` (
   CONSTRAINT `uq_users_email` UNIQUE (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 简历：保存 MinIO 对象元数据和 LLM 解析后的 Resume JSON。
+-- 简历：只保存 MinIO 对象元数据；PDF 和结构化 Resume JSON 均保存在 MinIO。
 CREATE TABLE `resumes` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `user_id` BIGINT NOT NULL,
@@ -29,7 +29,6 @@ CREATE TABLE `resumes` (
   `storage_object_key` VARCHAR(512) NOT NULL,
   `storage_uri` VARCHAR(1024) NOT NULL,
   `object_etag` VARCHAR(128) NULL,
-  `parsed_data` JSON NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT `pk_resumes` PRIMARY KEY (`id`),
   CONSTRAINT `fk_resumes_user_id_users`

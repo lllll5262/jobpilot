@@ -7,9 +7,9 @@ from app.repository.resume_repository import ResumeRepository
 from app.repository.user_repository import UserRepository
 from app.schemas.persistence import ProfileRecord
 from app.schemas.profile import CandidateProfile
-from app.schemas.resume import ResumeParseResult
 from app.services.persistence_helpers import require_user
 from app.services.profile_service import CandidateProfileService
+from app.services.resume_content_service import ResumeContentService
 
 
 class ProfileStorageService:
@@ -21,11 +21,13 @@ class ProfileStorageService:
         profile_repository: ProfileRepository,
         resume_repository: ResumeRepository,
         user_repository: UserRepository,
+        resume_content_service: ResumeContentService,
     ) -> None:
         self._builder_service = builder_service
         self._profile_repository = profile_repository
         self._resume_repository = resume_repository
         self._user_repository = user_repository
+        self._resume_content_service = resume_content_service
 
     async def build_and_save(self, *, user_id: int, resume_id: int) -> ProfileRecord:
         """构建 Profile 并把旧的当前版本归档。"""
@@ -34,7 +36,7 @@ class ProfileStorageService:
         if resume_record is None:
             raise AppException("Resume not found", code=40402, status_code=404)
 
-        resume = ResumeParseResult.model_validate(resume_record.parsed_data)
+        resume = await self._resume_content_service.load(resume_record)
         profile = await self._builder_service.build(resume)
         record = await self._profile_repository.create_current(
             user_id=user_id,

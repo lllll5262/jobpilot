@@ -14,6 +14,7 @@ from app.api.interview import get_interview_agent
 from app.db.base import Base
 from app.main import app
 from app.schemas.interview import InterviewAnswerRequest, InterviewStartRequest
+from app.schemas.resume import ResumeParseResult
 from app.services.interview_evaluator import InterviewEvaluator
 from app.services.interview_service import InterviewService
 
@@ -157,7 +158,19 @@ class FakeResumeRepository:
     async def get_by_id(self, resume_id: int, *, user_id: int) -> Any:
         if (resume_id, user_id) != (10, 1):
             return None
-        return SimpleNamespace(id=10, user_id=1, parsed_data=RESUME_DATA)
+        return SimpleNamespace(
+            id=10,
+            user_id=1,
+            storage_bucket="jobpilot-resumes",
+            storage_object_key="users/1/resumes/test.pdf",
+        )
+
+
+class FakeResumeContentService:
+    """从 MinIO 读取结构化简历的测试替身。"""
+
+    async def load(self, _: Any) -> ResumeParseResult:
+        return ResumeParseResult.model_validate(RESUME_DATA)
 
 
 class FakeInterviewRepository:
@@ -206,6 +219,7 @@ def build_service() -> InterviewService:
         profile_repository=FakeProfileRepository(),  # type: ignore[arg-type]
         resume_repository=FakeResumeRepository(),  # type: ignore[arg-type]
         user_repository=FakeUserRepository(),  # type: ignore[arg-type]
+        resume_content_service=FakeResumeContentService(),  # type: ignore[arg-type]
     )
 
 

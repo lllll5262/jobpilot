@@ -79,9 +79,9 @@ async def _ingest_resume(
         }
     except Exception:
         with suppress(Exception):
-            await object_store.delete(
+            await object_store.delete_resume(
                 bucket=metadata.bucket,
-                object_key=metadata.object_key,
+                pdf_object_key=metadata.object_key,
             )
         raise
     finally:

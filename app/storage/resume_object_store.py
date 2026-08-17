@@ -33,6 +33,27 @@ class ResumeObjectStore(Protocol):
 
     async def read(self, *, bucket: str, object_key: str) -> bytes: ...
 
-    async def delete(self, *, bucket: str, object_key: str) -> None: ...
+    async def save_parsed_resume(
+        self,
+        *,
+        bucket: str,
+        pdf_object_key: str,
+        content: bytes,
+    ) -> None: ...
+
+    async def read_parsed_resume(self, *, bucket: str, pdf_object_key: str) -> bytes: ...
+
+    async def delete_resume(self, *, bucket: str, pdf_object_key: str) -> None: ...
 
     def close(self) -> None: ...
+
+
+def parsed_resume_object_key(pdf_object_key: str) -> str:
+    """由 PDF 对象键稳定推导结构化 Resume JSON 对象键。"""
+    suffix = ".pdf"
+    base = (
+        pdf_object_key[: -len(suffix)]
+        if pdf_object_key.lower().endswith(suffix)
+        else pdf_object_key
+    )
+    return f"{base}.resume.json"

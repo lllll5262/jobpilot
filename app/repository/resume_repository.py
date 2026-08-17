@@ -1,7 +1,5 @@
 """简历 Repository。"""
 
-from typing import Any
-
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,9 +50,8 @@ class ResumeRepository:
         storage_object_key: str,
         storage_uri: str,
         object_etag: str | None,
-        parsed_data: dict[str, Any],
     ) -> Resume:
-        """保存 MinIO 地址、文件校验信息和结构化 Resume。"""
+        """只保存 MinIO 地址和文件校验元数据，不保存简历正文。"""
         resume = Resume(
             user_id=user_id,
             filename=filename,
@@ -65,7 +62,6 @@ class ResumeRepository:
             storage_object_key=storage_object_key,
             storage_uri=storage_uri,
             object_etag=object_etag,
-            parsed_data=parsed_data,
         )
         self._session.add(resume)
         try:

@@ -18,3 +18,6 @@ evals/.ragas_cache/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 本地模型超过 GitHub LFS 的单文件大小限制。
+models/bge-m3/pytorch_model.bin

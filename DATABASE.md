@@ -1,6 +1,6 @@
 # JobPilot 数据库说明
 
-阶段 5 使用 MySQL 8、SQLAlchemy 2.x Async 和 aiomysql。数据库名为 `jobpilot`，字符集为 `utf8mb4`。原始简历 PDF 保存在 MinIO，MySQL 仅保存稳定对象地址和元数据，BGE-M3 向量保存在 Milvus，异步入库由 Celery 编排。系统不依赖 Elasticsearch。真实连接凭据只能存放在本地 `.env`。
+阶段 5 使用 MySQL 8、SQLAlchemy 2.x Async 和 aiomysql。数据库名为 `jobpilot`，字符集为 `utf8mb4`。原始简历 PDF 和结构化 Resume JSON 保存在 MinIO，MySQL 仅保存稳定对象地址和元数据，BGE-M3 向量保存在 Milvus，异步入库由 Celery 编排。系统不依赖 Elasticsearch。真实连接凭据只能存放在本地 `.env`。
 
 ## 表结构
 
@@ -27,11 +27,12 @@
 | storage_object_key | VARCHAR(512) | MinIO object key |
 | storage_uri | VARCHAR(1024) | 稳定的 `s3://` 地址 |
 | object_etag | VARCHAR(128) | MinIO ETag，可空 |
-| parsed_data | JSON | Resume Schema |
 | created_at | DATETIME | 创建时间 |
 
-原始 PDF 二进制不进入 MySQL。下载接口根据 bucket 和 object key 动态生成短时签名
-URL，数据库不保存会过期的签名地址。`(user_id, doc_hash)` 唯一索引确保同一用户的
+原始 PDF、解析后的结构化 Resume JSON 和内容分块均不进入 MySQL。PDF 与同名
+`.resume.json` 伴生对象保存在 MinIO，内容分块及向量只保存在 Milvus。下载接口根据
+bucket 和 object key 动态生成短时签名 URL，数据库不保存会过期的签名地址。
+`(user_id, doc_hash)` 唯一索引确保同一用户的
 相同文件只生成一条 Resume；不同用户之间保持数据隔离。
 
 同步和 Celery 异步入库最终都依赖 `(user_id, doc_hash)` 唯一索引处理并发竞争。
@@ -92,7 +93,20 @@ Get-Content "database/migrate_resume_minio_metadata.sql" -Raw | mysql -h <mysql-
 ```
 
 迁移脚本不删除旧数据，新增列允许旧记录保持 `NULL`。旧记录需要重新上传原始 PDF 后，
-才能使用 MinIO 下载接口。
+才能使用 MinIO 下载接口。当对象元数据已补齐后，依次执行：
+
+```powershell
+# 1. 只校验，不写 MinIO
+.\.venv\Scripts\python.exe "database/migrate_resume_content_to_minio.py"
+
+# 2. 将 resumes.parsed_data 写成 MinIO 伴生 .resume.json
+.\.venv\Scripts\python.exe "database/migrate_resume_content_to_minio.py" --apply
+
+# 3. 备份并确认前两步无 skipped 后，删除 MySQL 正文列
+Get-Content "database/drop_resume_parsed_data.sql" -Raw | mysql -h <mysql-host> -P <mysql-port> -u <mysql-user> -p
+```
+
+部署顺序不能颠倒：旧库的 `parsed_data` 列是 `NOT NULL` 时，新版应用只能在第 3 步完成后启动。
 
 当前 `resume_id=6` 的原始 PDF 已上传到 MinIO，可在结构迁移完成后执行
 `database/backfill_resume_6_minio.sql` 写入对应对象元数据：

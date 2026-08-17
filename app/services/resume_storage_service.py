@@ -15,6 +15,7 @@ from app.schemas.persistence import ResumeRecord
 from app.schemas.resume import ResumeParseResult
 from app.schemas.resume_vector import ResumeChunkMatch, ResumeSourceRecord
 from app.services.persistence_helpers import require_user
+from app.services.resume_content_service import ResumeContentService
 from app.services.resume_knowledge_service import ResumeKnowledgeService
 from app.services.resume_parser_service import ResumeParserService
 from app.storage.resume_object_store import ResumeObjectMetadata, ResumeObjectStore
@@ -47,6 +48,7 @@ class ResumeStorageService:
         self._user_repository = user_repository
         self._knowledge_service = knowledge_service
         self._object_store = object_store
+        self._content_service = ResumeContentService(object_store)
 
     async def parse_and_save(
         self,
@@ -63,10 +65,9 @@ class ResumeStorageService:
             doc_hash=doc_hash,
         )
         if duplicate is not None:
-            return self._to_record(duplicate, duplicate=True)
+            return await self._to_record(duplicate, duplicate=True)
 
         parsed_document = await self._parser_service.parse_with_source(pdf_content)
-        stored_object = None
         try:
             stored_object = await self._object_store.save(
                 user_id=user_id,
@@ -75,27 +76,21 @@ class ResumeStorageService:
                 content_type="application/pdf",
                 doc_hash=doc_hash,
             )
-            return await self._persist_parsed_resume(
-                user_id=user_id,
-                filename=filename,
-                doc_hash=doc_hash,
-                stored_object=stored_object,
-                parsed_resume=parsed_document.resume,
-                cleaned_text=parsed_document.cleaned_text,
-            )
         except Exception as exc:
-            if stored_object is not None:
-                with suppress(Exception):
-                    await self._object_store.delete(
-                        bucket=stored_object.bucket,
-                        object_key=stored_object.object_key,
-                    )
             return await self._handle_storage_failure(
                 exc=exc,
                 user_id=user_id,
                 doc_hash=doc_hash,
                 record=None,
             )
+        return await self._persist_parsed_resume(
+            user_id=user_id,
+            filename=filename,
+            doc_hash=doc_hash,
+            stored_object=stored_object,
+            parsed_resume=parsed_document.resume,
+            cleaned_text=parsed_document.cleaned_text,
+        )
 
     async def prepare_async_ingestion(
         self,
@@ -114,7 +109,7 @@ class ResumeStorageService:
         if duplicate is not None:
             return ResumeIngestionPreparation(
                 doc_hash=doc_hash,
-                duplicate=self._to_record(duplicate, duplicate=True),
+                duplicate=await self._to_record(duplicate, duplicate=True),
             )
         stored_object = await self._object_store.save(
             user_id=user_id,
@@ -149,18 +144,10 @@ class ResumeStorageService:
         )
         if duplicate is not None:
             await self.discard_staged(stored_object)
-            return self._to_record(duplicate, duplicate=True)
+            return await self._to_record(duplicate, duplicate=True)
 
         try:
             parsed_document = await self._parser_service.parse_with_source(pdf_content)
-            return await self._persist_parsed_resume(
-                user_id=user_id,
-                filename=filename,
-                doc_hash=doc_hash,
-                stored_object=stored_object,
-                parsed_resume=parsed_document.resume,
-                cleaned_text=parsed_document.cleaned_text,
-            )
         except Exception as exc:
             with suppress(Exception):
                 await self.discard_staged(stored_object)
@@ -170,12 +157,20 @@ class ResumeStorageService:
                 doc_hash=doc_hash,
                 record=None,
             )
+        return await self._persist_parsed_resume(
+            user_id=user_id,
+            filename=filename,
+            doc_hash=doc_hash,
+            stored_object=stored_object,
+            parsed_resume=parsed_document.resume,
+            cleaned_text=parsed_document.cleaned_text,
+        )
 
     async def discard_staged(self, stored_object: ResumeObjectMetadata) -> None:
         """任务发布失败或重复命中时删除尚未成为正式简历的 MinIO 对象。"""
-        await self._object_store.delete(
+        await self._object_store.delete_resume(
             bucket=stored_object.bucket,
-            object_key=stored_object.object_key,
+            pdf_object_key=stored_object.object_key,
         )
 
     async def _persist_parsed_resume(
@@ -188,9 +183,13 @@ class ResumeStorageService:
         parsed_resume: ResumeParseResult,
         cleaned_text: str,
     ) -> ResumeRecord:
-        """把同一份解析结果依次写入 MySQL 和 Milvus。"""
+        """结构化 Resume 写 MinIO，MySQL 只写元数据，分块写 Milvus。"""
         record = None
         try:
+            await self._content_service.save(
+                stored_object=stored_object,
+                resume=parsed_resume,
+            )
             record = await self._resume_repository.create(
                 user_id=user_id,
                 filename=filename,
@@ -201,7 +200,6 @@ class ResumeStorageService:
                 storage_object_key=stored_object.object_key,
                 storage_uri=stored_object.storage_uri,
                 object_etag=stored_object.etag,
-                parsed_data=parsed_resume.model_dump(mode="json"),
             )
             await self._knowledge_service.save(
                 resume_id=record.id,
@@ -221,7 +219,7 @@ class ResumeStorageService:
                 doc_hash=doc_hash,
                 record=record,
             )
-        return self._to_record(record)
+        return await self._to_record(record, resume=parsed_resume)
 
     async def _handle_storage_failure(
         self,
@@ -238,7 +236,7 @@ class ResumeStorageService:
                 doc_hash=doc_hash,
             )
             if duplicate is not None:
-                return self._to_record(duplicate, duplicate=True)
+                return await self._to_record(duplicate, duplicate=True)
         logger.exception(
             "简历跨存储写入失败 resume_id=%s",
             record.id if record is not None else None,
@@ -301,7 +299,7 @@ class ResumeStorageService:
             content_type=model.content_type,
             storage_uri=model.storage_uri,
             download_url=download_url,
-            resume=ResumeParseResult.model_validate(model.parsed_data),
+            resume=await self._content_service.load(model),
         )
 
     async def get(self, *, user_id: int, resume_id: int | None = None) -> ResumeRecord:
@@ -314,11 +312,16 @@ class ResumeStorageService:
         )
         if record is None:
             raise AppException("Resume not found", code=40402, status_code=404)
-        return self._to_record(record)
+        return await self._to_record(record)
 
-    @staticmethod
-    def _to_record(record: Resume, *, duplicate: bool = False) -> ResumeRecord:
-        """把 ORM Resume 转换为 API DTO。"""
+    async def _to_record(
+        self,
+        record: Resume,
+        *,
+        duplicate: bool = False,
+        resume: ResumeParseResult | None = None,
+    ) -> ResumeRecord:
+        """从 MySQL 元数据与 MinIO 内容组合 API DTO。"""
         return ResumeRecord(
             id=record.id,
             user_id=record.user_id,
@@ -328,6 +331,6 @@ class ResumeStorageService:
             file_size_bytes=record.file_size_bytes,
             content_type=record.content_type,
             storage_uri=record.storage_uri,
-            resume=ResumeParseResult.model_validate(record.parsed_data),
+            resume=resume or await self._content_service.load(record),
             created_at=record.created_at,
         )

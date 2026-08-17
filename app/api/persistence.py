@@ -46,6 +46,7 @@ from app.services.job_storage_service import JobStorageService
 from app.services.match_service import MatchService
 from app.services.profile_service import CandidateProfileService
 from app.services.profile_storage_service import ProfileStorageService
+from app.services.resume_content_service import ResumeContentService
 from app.services.resume_knowledge_service import ResumeKnowledgeService
 from app.services.resume_parser_service import ResumeParserService
 from app.services.resume_rag_service import ResumeRagService
@@ -104,6 +105,7 @@ def get_resume_rag_service(
 def get_profile_storage_service(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     builder_service: Annotated[CandidateProfileService, Depends(get_profile_service)],
+    object_store: Annotated[MinioResumeObjectStore, Depends(get_resume_object_store)],
 ) -> ProfileStorageService:
     """组装 Profile 持久化 Service。"""
     return ProfileStorageService(
@@ -111,6 +113,7 @@ def get_profile_storage_service(
         ProfileRepository(session),
         ResumeRepository(session),
         UserRepository(session),
+        ResumeContentService(object_store),
     )
 
 
@@ -129,6 +132,7 @@ def get_job_storage_service(
 def get_analysis_storage_service(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     match_service: Annotated[MatchService, Depends(get_match_service)],
+    object_store: Annotated[MinioResumeObjectStore, Depends(get_resume_object_store)],
 ) -> AnalysisStorageService:
     """组装岗位分析持久化 Service。"""
     return AnalysisStorageService(
@@ -138,6 +142,7 @@ def get_analysis_storage_service(
         ProfileRepository(session),
         ResumeRepository(session),
         UserRepository(session),
+        ResumeContentService(object_store),
     )
 
 

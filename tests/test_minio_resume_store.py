@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.storage.minio_resume_store import MinioResumeObjectStore
+from app.storage.resume_object_store import parsed_resume_object_key
 
 
 class FakeMinioClient:
@@ -13,8 +14,8 @@ class FakeMinioClient:
 
     def __init__(self) -> None:
         self.bucket_created: tuple[str, str | None] | None = None
-        self.saved: dict[str, Any] | None = None
-        self.deleted: tuple[str, str] | None = None
+        self.saved_objects: dict[str, dict[str, Any]] = {}
+        self.deleted: list[tuple[str, str]] = []
 
     def bucket_exists(self, bucket: str) -> bool:
         return False
@@ -30,9 +31,9 @@ class FakeMinioClient:
         *,
         length: int,
         content_type: str,
-        metadata: dict[str, str],
+        metadata: dict[str, str] | None = None,
     ) -> Any:
-        self.saved = {
+        self.saved_objects[object_key] = {
             "bucket": bucket,
             "object_key": object_key,
             "content": data.read(),
@@ -54,11 +55,13 @@ class FakeMinioClient:
 
     def get_object(self, bucket: str, object_key: str) -> Any:
         assert bucket == "jobpilot-resumes"
+        if object_key.endswith(".resume.json"):
+            return FakeObjectResponse(self.saved_objects[object_key]["content"])
         assert object_key.endswith(".pdf")
         return FakeObjectResponse(b"%PDF-staged")
 
     def remove_object(self, bucket: str, object_key: str) -> None:
-        self.deleted = (bucket, object_key)
+        self.deleted.append((bucket, object_key))
 
 
 class FakeObjectResponse:
@@ -104,9 +107,9 @@ def test_minio_store_saves_private_pdf_and_returns_stable_metadata() -> None:
         )
 
         assert client.bucket_created == ("jobpilot-resumes", None)
-        assert client.saved is not None
-        assert client.saved["content"] == content
-        assert client.saved["metadata"] == {"sha256": "a" * 64}
+        saved_pdf = client.saved_objects[metadata.object_key]
+        assert saved_pdf["content"] == content
+        assert saved_pdf["metadata"] == {"sha256": "a" * 64}
         assert metadata.object_key.startswith("users/7/resumes/")
         assert metadata.object_key.endswith(".pdf")
         assert metadata.storage_uri == (
@@ -126,7 +129,27 @@ def test_minio_store_saves_private_pdf_and_returns_stable_metadata() -> None:
         )
         assert staged_content == b"%PDF-staged"
 
-        await store.delete(bucket=metadata.bucket, object_key=metadata.object_key)
-        assert client.deleted == (metadata.bucket, metadata.object_key)
+        parsed_content = b'{"skills":["Java"]}'
+        await store.save_parsed_resume(
+            bucket=metadata.bucket,
+            pdf_object_key=metadata.object_key,
+            content=parsed_content,
+        )
+        parsed_key = parsed_resume_object_key(metadata.object_key)
+        assert client.saved_objects[parsed_key]["content"] == parsed_content
+        assert client.saved_objects[parsed_key]["content_type"] == "application/json"
+        assert await store.read_parsed_resume(
+            bucket=metadata.bucket,
+            pdf_object_key=metadata.object_key,
+        ) == parsed_content
+
+        await store.delete_resume(
+            bucket=metadata.bucket,
+            pdf_object_key=metadata.object_key,
+        )
+        assert client.deleted == [
+            (metadata.bucket, metadata.object_key),
+            (metadata.bucket, parsed_key),
+        ]
 
     asyncio.run(run())

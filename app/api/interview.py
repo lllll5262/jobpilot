@@ -23,6 +23,9 @@ from app.schemas.interview import (
 )
 from app.services.interview_evaluator import InterviewEvaluator
 from app.services.interview_service import InterviewService
+from app.services.resume_content_service import ResumeContentService
+from app.storage.dependencies import get_resume_object_store
+from app.storage.minio_resume_store import MinioResumeObjectStore
 
 router = APIRouter(prefix="/users/{user_id}/interviews", tags=["Interview Assistant"])
 UserId = Annotated[int, Path(gt=0)]
@@ -32,6 +35,7 @@ InterviewId = Annotated[int, Path(gt=0)]
 def get_interview_service(
     model: Annotated[OpenAICompatibleClient, Depends(get_llm_client)],
     session: Annotated[AsyncSession, Depends(get_db_session)],
+    object_store: Annotated[MinioResumeObjectStore, Depends(get_resume_object_store)],
 ) -> InterviewService:
     """组装面试服务，Tool 只调用该业务层。"""
     return InterviewService(
@@ -42,6 +46,7 @@ def get_interview_service(
         profile_repository=ProfileRepository(session),
         resume_repository=ResumeRepository(session),
         user_repository=UserRepository(session),
+        resume_content_service=ResumeContentService(object_store),
     )
 
 

@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。MySQL 保存业务关系和简历对象元数据，MinIO 保存原始 PDF，Milvus 保存可检索的简历父子块向量。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。MySQL 只保存简历编号、所属用户、内容指纹和 MinIO 位置等元数据；MinIO 保存原始 PDF 与解析后的 Resume JSON；Milvus 只保存可检索的简历父子块和向量。
 
 ## 环境要求
 
@@ -81,7 +81,8 @@ curl.exe -X POST "http://127.0.0.1:8000/users/1/resumes/parse" `
 PDF → SHA-256 → MySQL 按 (user_id, doc_hash) 去重
  ├→ 已存在：直接返回已有 Resume，不重复解析和向量化
  └→ 新文件 ───────────────────────────────────────→ MinIO 私有对象
-      ├→ 文件哈希、大小、Content-Type、s3:// 地址 ─→ MySQL
+      ├→ 原始 PDF 与同路径 `.resume.json` ─→ MinIO
+      ├→ 编号、用户、哈希、大小、Content-Type、s3:// 地址 ─→ MySQL
       └→ 清洗正文 → 父块 1000 字符 → 子块 400 字符
                                       └→ BGE-M3 稠密/稀疏向量 → Milvus
 ```
@@ -112,8 +113,8 @@ Worker 都能访问的服务。示例默认使用 Redis 的独立 DB；也可把
 Milvus 使用稠密向量和稀疏向量双路召回，并通过 `WeightedRanker(0.7, 0.3)`
 融合排序，不依赖 Elasticsearch。`POST /users/{user_id}/resumes/search` 用于检索相关
 子块并返回对应父块。Milvus 实体自身保存 `parent_content`，用于生成上下文和来源核验；
-`GET /users/{user_id}/resumes/{resume_id}/source` 从 MySQL 读取对象元数据，并为
-MinIO 私有对象生成短时下载 URL。MySQL 中的 Resume ID 继续作为 Profile 和 Interview
+`GET /users/{user_id}/resumes/{resume_id}/source` 从 MySQL 读取对象元数据，从 MinIO 读取结构化 Resume JSON，并为
+MinIO 私有 PDF 生成短时下载 URL。MySQL 中的 Resume ID 继续作为 Profile 和 Interview
 的外键。
 
 Milvus 新环境会创建版本化物理 Collection（默认 `jobpilot_resume_chunks_v1`），应用
@@ -163,9 +164,10 @@ Resume 保存候选人做过的教育、项目和实习经历；Candidate Profil
 Get-Content "database/jobpilot_schema.sql" -Raw | mysql -h <mysql-host> -P <mysql-port> -u <mysql-user> -p
 ```
 
-已有 `resumes` 表需要先备份数据库，再执行
-`database/migrate_resume_minio_metadata.sql` 增加对象元数据列。旧简历没有对应的原始
-PDF 对象，需重新上传后才能获得下载地址。
+已有 `resumes` 表先备份数据库，再执行
+`database/migrate_resume_minio_metadata.sql` 增加对象元数据列。对已有完整 MinIO 元数据的记录，先运行
+`python database/migrate_resume_content_to_minio.py` 检查，再加 `--apply` 将旧 `parsed_data` 回填为 MinIO `.resume.json`。
+确认无跳过记录后，才执行 `database/drop_resume_parsed_data.sql` 删除 MySQL 正文列。
 
 持久化接口：
 

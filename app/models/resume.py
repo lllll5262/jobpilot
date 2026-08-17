@@ -1,15 +1,13 @@
 """简历 ORM Model。"""
 
-from typing import Any
-
-from sqlalchemy import JSON, BigInteger, ForeignKey, Index, String
+from sqlalchemy import BigInteger, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, CreatedAtMixin
 
 
 class Resume(CreatedAtMixin, Base):
-    """保存 MinIO 对象元数据和结构化 Resume，不保存原始 PDF 二进制。"""
+    """仅保存 MinIO 简历对象的业务编号、位置和校验元数据。"""
 
     __tablename__ = "resumes"
     __table_args__ = (
@@ -37,4 +35,3 @@ class Resume(CreatedAtMixin, Base):
     storage_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     storage_uri: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     object_etag: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    parsed_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)

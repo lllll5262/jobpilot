@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -18,6 +19,7 @@ from app.schemas.resume import ResumeParseResult
 from app.services.analysis_storage_service import AnalysisStorageService
 from app.services.job_storage_service import JobStorageService
 from app.services.profile_storage_service import ProfileStorageService
+from app.services.resume_content_service import ResumeContentService
 from app.services.resume_parser_service import ParsedResumeDocument
 from app.services.resume_storage_service import ResumeStorageService
 from app.services.user_service import UserService
@@ -102,7 +104,6 @@ class FakeResumeRepository:
         storage_object_key: str,
         storage_uri: str,
         object_etag: str | None,
-        parsed_data: dict[str, Any],
     ) -> Any:
         self.record = SimpleNamespace(
             id=10,
@@ -115,7 +116,6 @@ class FakeResumeRepository:
             storage_object_key=storage_object_key,
             storage_uri=storage_uri,
             object_etag=object_etag,
-            parsed_data=parsed_data,
             created_at=CREATED_AT,
         )
         return self.record
@@ -245,6 +245,7 @@ class FakeResumeObjectStore:
 
     def __init__(self) -> None:
         self.deleted = False
+        self.parsed_content = json.dumps(RESUME_DATA).encode("utf-8")
 
     async def save(self, **values: Any) -> ResumeObjectMetadata:
         return ResumeObjectMetadata(
@@ -263,8 +264,15 @@ class FakeResumeObjectStore:
         del bucket, object_key
         return b"%PDF-test"
 
-    async def delete(self, *, bucket: str, object_key: str) -> None:
-        del bucket, object_key
+    async def save_parsed_resume(self, **values: Any) -> None:
+        self.parsed_content = values["content"]
+
+    async def read_parsed_resume(self, *, bucket: str, pdf_object_key: str) -> bytes:
+        del bucket, pdf_object_key
+        return self.parsed_content
+
+    async def delete_resume(self, *, bucket: str, pdf_object_key: str) -> None:
+        del bucket, pdf_object_key
         self.deleted = True
 
     def close(self) -> None:
@@ -322,6 +330,7 @@ def test_metadata_contains_stage5_tables() -> None:
         "storage_uri",
         "object_etag",
     }.issubset(Base.metadata.tables["resumes"].columns.keys())
+    assert "parsed_data" not in Base.metadata.tables["resumes"].columns
     unique_indexes = {
         index.name
         for index in Base.metadata.tables["resumes"].indexes
@@ -387,6 +396,7 @@ def test_persistence_services_complete_closed_loop() -> None:
             profile_repository,
             resume_repository,
             user_repository,
+            ResumeContentService(object_store),
         )
         profile = await profile_service.build_and_save(
             user_id=user.id,
@@ -413,6 +423,7 @@ def test_persistence_services_complete_closed_loop() -> None:
             profile_repository,
             resume_repository,
             user_repository,
+            ResumeContentService(object_store),
         )
         analysis = await analysis_service.analyze_and_save(
             user_id=user.id,
@@ -496,7 +507,6 @@ def test_resume_storage_returns_duplicate_before_parsing_and_external_writes() -
             storage_object_key="users/1/resumes/existing.pdf",
             storage_uri="s3://jobpilot-resumes/users/1/resumes/existing.pdf",
             object_etag="existing-etag",
-            parsed_data=RESUME_DATA,
         )
         service = ResumeStorageService(
             UnexpectedParser(),  # type: ignore[arg-type]

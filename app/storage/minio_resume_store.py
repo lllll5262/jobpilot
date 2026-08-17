@@ -6,7 +6,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from app.storage.resume_object_store import ResumeObjectMetadata
+from app.storage.resume_object_store import ResumeObjectMetadata, parsed_resume_object_key
 
 
 class MinioResumeObjectStore:
@@ -136,9 +136,50 @@ class MinioResumeObjectStore:
             response.close()
             response.release_conn()
 
-    async def delete(self, *, bucket: str, object_key: str) -> None:
-        """删除跨存储失败时遗留的对象。"""
-        await asyncio.to_thread(self._get_client().remove_object, bucket, object_key)
+    async def save_parsed_resume(
+        self,
+        *,
+        bucket: str,
+        pdf_object_key: str,
+        content: bytes,
+    ) -> None:
+        """把结构化 Resume JSON 保存为原始 PDF 的伴生对象。"""
+        await asyncio.to_thread(
+            self._save_parsed_resume_sync,
+            bucket,
+            pdf_object_key,
+            content,
+        )
+
+    def _save_parsed_resume_sync(
+        self,
+        bucket: str,
+        pdf_object_key: str,
+        content: bytes,
+    ) -> None:
+        self._get_client().put_object(
+            bucket,
+            parsed_resume_object_key(pdf_object_key),
+            BytesIO(content),
+            length=len(content),
+            content_type="application/json",
+        )
+
+    async def read_parsed_resume(self, *, bucket: str, pdf_object_key: str) -> bytes:
+        """读取与原始 PDF 同 UUID 的结构化 Resume JSON。"""
+        return await self.read(
+            bucket=bucket,
+            object_key=parsed_resume_object_key(pdf_object_key),
+        )
+
+    async def delete_resume(self, *, bucket: str, pdf_object_key: str) -> None:
+        """补偿删除原始 PDF 及其结构化 JSON 伴生对象。"""
+        await asyncio.to_thread(self._delete_resume_sync, bucket, pdf_object_key)
+
+    def _delete_resume_sync(self, bucket: str, pdf_object_key: str) -> None:
+        client = self._get_client()
+        client.remove_object(bucket, pdf_object_key)
+        client.remove_object(bucket, parsed_resume_object_key(pdf_object_key))
 
     def close(self) -> None:
         """释放 MinIO SDK 使用的 HTTP 连接池。"""
