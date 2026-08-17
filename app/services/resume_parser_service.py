@@ -2,6 +2,7 @@
 
 import logging
 import re
+from dataclasses import dataclass
 
 from app.core.exceptions import AppException
 from app.llm.client import JSONGenerator
@@ -19,6 +20,14 @@ from app.schemas.resume import ResumeParseResult
 from app.services.structured_output import generate_structured_output
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedResumeDocument:
+    """同时返回结构化简历和清洗后的完整原文，供 MongoDB/Milvus 存储。"""
+
+    resume: ResumeParseResult
+    cleaned_text: str
 
 
 def clean_resume_text(text: str) -> str:
@@ -43,8 +52,8 @@ class ResumeParserService:
         self._llm_client = llm_client
         self._max_text_chars = max_text_chars
 
-    async def parse(self, pdf_content: bytes) -> ResumeParseResult:
-        """解析文本型 PDF；扫描件会因无可提取文本而被明确拒绝。"""
+    async def parse_with_source(self, pdf_content: bytes) -> ParsedResumeDocument:
+        """解析 PDF，并保留用于溯源和父子分块的清洗后完整文本。"""
         try:
             parsed_document = self._document_parser.parse(pdf_content)
         except EncryptedDocumentError as exc:
@@ -95,4 +104,7 @@ class ResumeParserService:
             len(result.projects),
             len(result.internships),
         )
-        return result
+        return ParsedResumeDocument(
+            resume=result,
+            cleaned_text=cleaned_text,
+        )

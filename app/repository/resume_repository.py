@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resume import Resume
@@ -49,3 +49,13 @@ class ResumeRepository:
         await self._session.commit()
         await self._session.refresh(resume)
         return resume
+
+    async def delete(self, resume_id: int, *, user_id: int) -> None:
+        """删除一次未完成跨存储写入产生的关系型记录。"""
+        await self._session.execute(
+            delete(Resume).where(
+                Resume.id == resume_id,
+                Resume.user_id == user_id,
+            )
+        )
+        await self._session.commit()

@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.interview_agent import InterviewAgent
@@ -37,6 +38,7 @@ class SupervisorGraph:
         resume_agent: ResumeAgent,
         job_agent: JobAgent,
         interview_agent: InterviewAgent,
+        checkpointer: BaseCheckpointSaver[Any] | None = None,
     ) -> None:
         self._model = model
         self._resume_agent = resume_agent
@@ -65,11 +67,23 @@ class SupervisorGraph:
         builder.add_edge("job_agent", "combine_result")
         builder.add_edge("interview_agent", "combine_result")
         builder.add_edge("combine_result", END)
-        self._graph = builder.compile()
+        self._graph = builder.compile(checkpointer=checkpointer)
 
-    async def run(self, state: SupervisorState) -> SupervisorState:
-        """执行一次 Supervisor 调度。"""
-        return await self._graph.ainvoke(state)
+    async def run(
+        self,
+        state: SupervisorState,
+        *,
+        thread_id: str,
+    ) -> SupervisorState:
+        """使用稳定线程标识执行调度，使同一前端对话可以恢复 Checkpoint。"""
+        return await self._graph.ainvoke(
+            state,
+            config={
+                "configurable": {
+                    "thread_id": thread_id,
+                }
+            },
+        )
 
     async def _understand_intent(self, state: SupervisorState) -> dict[str, Any]:
         """先处理确定性上下文，再让模型判断其余自然语言意图。"""

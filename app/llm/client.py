@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
-LLMProvider = Literal["qwen", "deepseek"]
+LLMProvider = Literal["qwen", "deepseek", "glm"]
 
 
 class JSONGenerator(Protocol):
@@ -80,7 +80,7 @@ class LLMResponseError(LLMClientError):
 
 
 class OpenAICompatibleClient:
-    """调用 Qwen 或 DeepSeek 的 OpenAI-compatible Chat Completions API。"""
+    """调用 Qwen、DeepSeek 或 GLM 的 OpenAI-compatible Chat Completions API。"""
 
     def __init__(
         self,
@@ -100,6 +100,21 @@ class OpenAICompatibleClient:
         # transport 仅用于依赖注入，生产环境默认使用 httpx 的网络传输层。
         self._transport = transport
 
+    @property
+    def provider(self) -> LLMProvider:
+        """返回当前请求实际选择的供应商，便于诊断和测试路由。"""
+        return self._provider
+
+    @property
+    def model(self) -> str:
+        """返回当前请求实际使用的模型编码。"""
+        return self._model
+
+    @property
+    def is_configured(self) -> bool:
+        """仅暴露是否已配置，不向调用方泄露 API Key。"""
+        return self._api_key is not None
+
     async def generate_json(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         """请求模型输出 JSON，并解析为字典。"""
         if not self._api_key:
@@ -117,6 +132,10 @@ class OpenAICompatibleClient:
         if self._provider == "qwen":
             # Qwen 的 JSON Mode 与思考模式不能同时开启。
             request_body["enable_thinking"] = False
+        elif self._provider in {"deepseek", "glm"}:
+            # 结构化输出不需要推理内容；关闭思考也避免 Tool Calling 后续轮次
+            # 被供应商要求回传 reasoning_content。
+            request_body["thinking"] = {"type": "disabled"}
 
         try:
             async with httpx.AsyncClient(
@@ -183,6 +202,8 @@ class OpenAICompatibleClient:
         if self._provider == "qwen":
             # Qwen Tool Calling 使用非思考模式，避免 reasoning 内容干扰工具参数。
             request_body["enable_thinking"] = False
+        elif self._provider in {"deepseek", "glm"}:
+            request_body["thinking"] = {"type": "disabled"}
 
         try:
             async with httpx.AsyncClient(

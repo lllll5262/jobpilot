@@ -5,13 +5,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Path, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import get_llm_client, get_resume_parser_service
 from app.api.file_validation import read_validated_pdf
 from app.api.job import get_jd_parser_service
 from app.api.match import get_match_service
 from app.api.profile import get_profile_service
-from app.api.resume import get_resume_parser_service
 from app.core.config import Settings, get_settings
 from app.db.database import get_db_session
+from app.llm.client import OpenAICompatibleClient
 from app.repository.analysis_repository import AnalysisRepository
 from app.repository.job_repository import JobRepository
 from app.repository.profile_repository import ProfileRepository
@@ -29,15 +30,24 @@ from app.schemas.persistence import (
     UserCreateRequest,
     UserRecord,
 )
+from app.schemas.resume_rag import ResumeAnswerRequest, ResumeAnswerResult
+from app.schemas.resume_vector import (
+    ResumeSearchRequest,
+    ResumeSearchResult,
+    ResumeSourceRecord,
+)
 from app.services.analysis_storage_service import AnalysisStorageService
 from app.services.jd_parser_service import JDParserService
 from app.services.job_storage_service import JobStorageService
 from app.services.match_service import MatchService
 from app.services.profile_service import CandidateProfileService
 from app.services.profile_storage_service import ProfileStorageService
+from app.services.resume_knowledge_service import ResumeKnowledgeService
 from app.services.resume_parser_service import ResumeParserService
+from app.services.resume_rag_service import ResumeRagService
 from app.services.resume_storage_service import ResumeStorageService
 from app.services.user_service import UserService
+from app.vectorstore.dependencies import get_resume_knowledge_service
 
 router = APIRouter(tags=["Persistence"])
 
@@ -54,13 +64,26 @@ def get_user_service(
 def get_resume_storage_service(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     parser_service: Annotated[ResumeParserService, Depends(get_resume_parser_service)],
+    knowledge_service: Annotated[
+        ResumeKnowledgeService,
+        Depends(get_resume_knowledge_service),
+    ],
 ) -> ResumeStorageService:
     """组装 Resume 持久化 Service。"""
     return ResumeStorageService(
         parser_service,
         ResumeRepository(session),
         UserRepository(session),
+        knowledge_service,
     )
+
+
+def get_resume_rag_service(
+    client: Annotated[OpenAICompatibleClient, Depends(get_llm_client)],
+    resume_service: Annotated[ResumeStorageService, Depends(get_resume_storage_service)],
+) -> ResumeRagService:
+    """组装简历检索增强问答 Service。"""
+    return ResumeRagService(llm_client=client, resume_service=resume_service)
 
 
 def get_profile_storage_service(
@@ -135,6 +158,59 @@ async def parse_and_save_resume(
         pdf_content=content,
     )
     return ApiResponse(data=record)
+
+
+@router.post(
+    "/users/{user_id}/resumes/search",
+    response_model=ApiResponse[ResumeSearchResult],
+)
+async def search_resume_context(
+    user_id: UserId,
+    request: ResumeSearchRequest,
+    service: Annotated[ResumeStorageService, Depends(get_resume_storage_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ApiResponse[ResumeSearchResult]:
+    """用 Milvus 稠密/稀疏混合排序检索简历，并返回命中子块及父块原文。"""
+    matches = await service.search_context(
+        user_id=user_id,
+        resume_id=request.resume_id,
+        query=request.query,
+        limit=request.limit or settings.resume_retrieval_limit,
+    )
+    return ApiResponse(data=ResumeSearchResult(query=request.query, matches=matches))
+
+
+@router.post(
+    "/users/{user_id}/resumes/answer",
+    response_model=ApiResponse[ResumeAnswerResult],
+)
+async def answer_from_resume(
+    user_id: UserId,
+    request: ResumeAnswerRequest,
+    service: Annotated[ResumeRagService, Depends(get_resume_rag_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ApiResponse[ResumeAnswerResult]:
+    """检索简历父块，并要求 LLM 仅依据检索上下文回答。"""
+    result = await service.answer(
+        user_id=user_id,
+        resume_id=request.resume_id,
+        query=request.query,
+        limit=request.limit or settings.resume_retrieval_limit,
+    )
+    return ApiResponse(data=result)
+
+
+@router.get(
+    "/users/{user_id}/resumes/{resume_id}/source",
+    response_model=ApiResponse[ResumeSourceRecord],
+)
+async def get_resume_source(
+    user_id: UserId,
+    resume_id: Annotated[int, Path(gt=0)],
+    service: Annotated[ResumeStorageService, Depends(get_resume_storage_service)],
+) -> ApiResponse[ResumeSourceRecord]:
+    """读取 MongoDB 中保存的完整简历，以便核对向量检索片段的来源。"""
+    return ApiResponse(data=await service.get_source(user_id=user_id, resume_id=resume_id))
 
 
 @router.post(

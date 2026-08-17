@@ -81,14 +81,18 @@ def test_jd_parser_service_rejects_invalid_structured_output() -> None:
 
 
 @pytest.mark.parametrize(
-    ("provider", "expects_thinking_option"),
-    [("qwen", True), ("deepseek", False)],
+    ("provider", "thinking_option"),
+    [
+        ("qwen", ("enable_thinking", False)),
+        ("deepseek", ("thinking", {"type": "disabled"})),
+        ("glm", ("thinking", {"type": "disabled"})),
+    ],
 )
 def test_compatible_client_uses_provider_specific_json_mode(
     provider: LLMProvider,
-    expects_thinking_option: bool,
+    thinking_option: tuple[str, Any],
 ) -> None:
-    """两家供应商共用 JSON Mode，但只有 Qwen 需要关闭思考模式。"""
+    """三家供应商共用 JSON Mode，并使用各自的非思考参数。"""
     captured_request: dict[str, Any] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -114,10 +118,8 @@ def test_compatible_client_uses_provider_specific_json_mode(
     assert captured_request["url"].endswith("/compatible-mode/v1/chat/completions")
     assert captured_request["authorization"] == "Bearer test-key"
     assert captured_request["body"]["response_format"] == {"type": "json_object"}
-    if expects_thinking_option:
-        assert captured_request["body"]["enable_thinking"] is False
-    else:
-        assert "enable_thinking" not in captured_request["body"]
+    option_name, option_value = thinking_option
+    assert captured_request["body"][option_name] == option_value
 
 
 def test_parse_job_description_endpoint() -> None:

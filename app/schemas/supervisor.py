@@ -36,6 +36,12 @@ class SupervisorRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    session_id: str = Field(
+        min_length=8,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="前端单个对话的稳定标识，用于恢复 Supervisor Checkpoint。",
+    )
     message: str = Field(min_length=1, max_length=20_000)
     payload: dict[str, Any] = Field(default_factory=dict)
 

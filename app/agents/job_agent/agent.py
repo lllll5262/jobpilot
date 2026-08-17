@@ -2,8 +2,6 @@
 
 from typing import Any
 
-from langgraph.checkpoint.base import BaseCheckpointSaver
-
 from app.agents.job_agent.graph import JobAgentGraph
 from app.agents.job_agent.state import JobAgentState
 from app.llm.client import ToolCallingModel
@@ -38,7 +36,6 @@ class JobAgent:
         job_service: JobStorageService,
         analysis_service: AnalysisStorageService,
         job_compare_service: JobCompareService | None = None,
-        checkpointer: BaseCheckpointSaver[Any] | None = None,
     ) -> None:
         tools = [
             GetCandidateProfileTool(user_id=user_id, service=profile_service),
@@ -48,11 +45,7 @@ class JobAgent:
         ]
         if job_compare_service is not None:
             tools.append(CompareJobsTool(user_id=user_id, service=job_compare_service))
-        self._graph = JobAgentGraph(
-            model,
-            tools,
-            checkpointer=checkpointer,
-        )
+        self._graph = JobAgentGraph(model, tools)
         self._user_id = user_id
         self._comparison_enabled = job_compare_service is not None
 
@@ -130,11 +123,8 @@ class JobAgent:
             "session_id": request.session_id,
             "turn": turn,
         }
-        result = await self._graph.run(
-            initial_state,
-            # checkpoint_ns 由 LangGraph 内部管理；每轮使用独立 thread_id 隔离状态。
-            thread_id=f"{request.session_id}:turn:{turn}",
-        )
+        # 统一对话的 LangGraph Checkpoint 由 Supervisor 保存；这里仅执行领域流程。
+        result = await self._graph.run(initial_state)
         raw_analysis = result.get("analysis")
         raw_job = result.get("job")
         return JobAgentSessionResponse(

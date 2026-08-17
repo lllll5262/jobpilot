@@ -3,13 +3,10 @@
 import asyncio
 from typing import Any
 
-import httpx
 import pymupdf
 import pytest
 
-from app.api.resume import get_resume_parser_service
 from app.core.exceptions import AppException
-from app.main import app
 from app.parsers.pdf_parser import PDFParser
 from app.schemas.resume import ResumeParseResult
 from app.services.resume_parser_service import ResumeParserService, clean_resume_text
@@ -98,22 +95,6 @@ class StubLLMClient:
         return self._result
 
 
-async def _post_file(
-    filename: str,
-    content: bytes,
-    content_type: str,
-) -> httpx.Response:
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url="http://testserver",
-    ) as client:
-        return await client.post(
-            "/resumes/parse",
-            files={"file": (filename, content, content_type)},
-        )
-
-
 def test_pdf_parser_extracts_text() -> None:
     """PyMuPDF 解析器应从真实文本型 PDF 中提取内容。"""
     result = PDFParser(max_pages=20).parse(build_text_pdf())
@@ -132,7 +113,7 @@ def test_pdf_parser_rejects_page_limit() -> None:
     )
 
     with pytest.raises(AppException) as exc_info:
-        asyncio.run(service.parse(build_text_pdf(page_count=2)))
+        asyncio.run(service.parse_with_source(build_text_pdf(page_count=2)))
 
     assert exc_info.value.code == 41302
 
@@ -153,9 +134,10 @@ def test_resume_parser_service_returns_valid_schema() -> None:
         max_text_chars=50_000,
     )
 
-    result = asyncio.run(service.parse(build_text_pdf()))
+    result = asyncio.run(service.parse_with_source(build_text_pdf()))
 
-    assert result == ResumeParseResult.model_validate(PARSED_RESUME)
+    assert result.resume == ResumeParseResult.model_validate(PARSED_RESUME)
+    assert "Jane Doe" in result.cleaned_text
     assert llm_client.user_prompt is not None
     assert "Jane Doe" in llm_client.user_prompt
 
@@ -169,7 +151,7 @@ def test_resume_parser_service_rejects_invalid_llm_schema() -> None:
     )
 
     with pytest.raises(AppException) as exc_info:
-        asyncio.run(service.parse(build_text_pdf()))
+        asyncio.run(service.parse_with_source(build_text_pdf()))
 
     assert exc_info.value.code == 50202
 
@@ -183,46 +165,6 @@ def test_resume_parser_service_rejects_scanned_pdf_without_text() -> None:
     )
 
     with pytest.raises(AppException) as exc_info:
-        asyncio.run(service.parse(build_text_pdf("")))
+        asyncio.run(service.parse_with_source(build_text_pdf("")))
 
     assert exc_info.value.code == 42212
-
-
-def test_parse_resume_endpoint() -> None:
-    """上传接口应完成真实 PDF 提取并返回统一结构。"""
-
-    def build_service() -> ResumeParserService:
-        return ResumeParserService(
-            PDFParser(max_pages=20),
-            StubLLMClient(PARSED_RESUME),
-            max_text_chars=50_000,
-        )
-
-    app.dependency_overrides[get_resume_parser_service] = build_service
-    try:
-        response = asyncio.run(_post_file("resume.pdf", build_text_pdf(), "application/pdf"))
-    finally:
-        app.dependency_overrides.pop(get_resume_parser_service, None)
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "code": 0,
-        "message": "success",
-        "data": PARSED_RESUME,
-    }
-
-
-def test_parse_resume_endpoint_rejects_non_pdf() -> None:
-    """文件扩展名和签名不符合 PDF 时应在调用服务前拒绝。"""
-    response = asyncio.run(_post_file("resume.txt", b"plain text", "text/plain"))
-
-    assert response.status_code == 400
-    assert response.json()["code"] == 40010
-
-
-def test_parse_resume_endpoint_rejects_fake_pdf() -> None:
-    """仅修改扩展名和 MIME 类型不能绕过 PDF 文件签名校验。"""
-    response = asyncio.run(_post_file("resume.pdf", b"plain text", "application/pdf"))
-
-    assert response.status_code == 400
-    assert response.json()["code"] == 40012

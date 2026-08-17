@@ -42,5 +42,10 @@ def test_frontend_assets_are_served() -> None:
     assert 'action === "optimize_resume"' in script.text
     assert 'data-conversation-id="${escapeHtml(conversation.id)}"' in script.text
     assert "openConversation(button.dataset.conversationId)" in script.text
+    assert "session_id: state.activeConversationId" in script.text
     assert 'localStorage.setItem(CONVERSATION_STORAGE_KEY' in script.text
+    assert '"X-LLM-Provider": state.model' in script.text
+    assert 'headers: { "X-LLM-Provider": state.model }' in script.text
+    assert 'data-model="deepseek"' in html.text
+    assert 'data-model="glm"' in html.text
     assert ".content-grid" in css.text

@@ -8,6 +8,8 @@ from app.schemas.supervisor import SupervisorRoute
 class SupervisorState(TypedDict):
     """Supervisor 只管理路由、原始状态和组合结果。"""
 
+    user_id: int
+    session_id: str
     message: str
     payload: dict[str, Any]
     route: NotRequired[SupervisorRoute]

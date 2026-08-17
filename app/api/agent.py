@@ -14,7 +14,6 @@ from app.api.persistence import (
 )
 from app.core.config import Settings, get_settings
 from app.llm.client import OpenAICompatibleClient
-from app.memory.checkpointer import RedisCheckpointSaver
 from app.memory.connection import get_redis_client
 from app.memory.conversation_memory import ConversationMemory
 from app.memory.session_store import AnalysisContextCache, SessionStore
@@ -61,20 +60,14 @@ def get_session_job_agent(
     profile_service: Annotated[ProfileStorageService, Depends(get_profile_storage_service)],
     job_service: Annotated[JobStorageService, Depends(get_job_storage_service)],
     analysis_service: Annotated[AnalysisStorageService, Depends(get_analysis_storage_service)],
-    client: Annotated[Redis, Depends(get_redis_client)],
-    settings: Annotated[Settings, Depends(get_settings)],
 ) -> JobAgent:
-    """为多轮会话组装带 Redis Checkpointer 的 Job Agent。"""
+    """为兼容接口组装 Job Agent；跨轮上下文由 SessionService 负责。"""
     return JobAgent(
         model=model,
         user_id=user_id,
         profile_service=profile_service,
         job_service=job_service,
         analysis_service=analysis_service,
-        checkpointer=RedisCheckpointSaver(
-            client,
-            ttl_seconds=settings.checkpoint_ttl_seconds,
-        ),
     )
 
 

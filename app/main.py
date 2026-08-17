@@ -16,13 +16,13 @@ from app.api.job import router as job_router
 from app.api.match import router as match_router
 from app.api.persistence import router as persistence_router
 from app.api.profile import router as profile_router
-from app.api.resume import router as resume_router
 from app.api.supervisor import router as supervisor_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.database import dispose_database
 from app.memory.connection import dispose_redis
+from app.vectorstore.dependencies import dispose_resume_knowledge_stores
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -42,6 +42,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     finally:
         await dispose_database()
         await dispose_redis()
+        await dispose_resume_knowledge_stores()
         logger.info("应用停止 name=%s", settings.app_name)
 
 
@@ -54,7 +55,6 @@ app = FastAPI(
 register_exception_handlers(app)
 app.include_router(health_router)
 app.include_router(job_router)
-app.include_router(resume_router)
 app.include_router(profile_router)
 app.include_router(match_router)
 app.include_router(persistence_router)

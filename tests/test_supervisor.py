@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agents.supervisor import SupervisorAgent
 from app.api.supervisor import get_supervisor_agent
@@ -16,6 +17,8 @@ from app.schemas.match import MatchResult
 from app.schemas.persistence import AnalysisRecord, JobRecord
 from app.schemas.resume_agent import ResumeAgentResult
 from app.schemas.supervisor import SupervisorRequest
+
+SESSION_ID = "supervisor-session-001"
 
 
 class StubRouteModel:
@@ -130,6 +133,7 @@ def build_supervisor() -> tuple[SupervisorAgent, StubResumeAgent, StubInterviewA
         resume_agent=resume_agent,  # type: ignore[arg-type]
         job_agent=StubJobAgent(),  # type: ignore[arg-type]
         interview_agent=interview_agent,  # type: ignore[arg-type]
+        user_id=1,
     )
     return supervisor, resume_agent, interview_agent
 
@@ -141,6 +145,7 @@ def test_supervisor_routes_and_preserves_trusted_payload() -> None:
     result = asyncio.run(
         supervisor.handle(
             SupervisorRequest(
+                session_id=SESSION_ID,
                 message="根据我的简历开始模拟面试",
                 payload=payload,
             )
@@ -160,6 +165,7 @@ def test_supervisor_drops_resume_id_before_interview_dispatch() -> None:
     result = asyncio.run(
         supervisor.handle(
             SupervisorRequest(
+                session_id=SESSION_ID,
                 message="根据我的简历开始模拟面试",
                 payload={"job_id": 30, "resume_id": 3},
             )
@@ -181,6 +187,7 @@ def test_supervisor_endpoint_returns_unified_response() -> None:
             return await client.post(
                 "/users/1/supervisor",
                 json={
+                    "session_id": SESSION_ID,
                     "message": "查看我的候选人画像",
                     "payload": {},
                 },
@@ -203,7 +210,9 @@ def test_supervisor_answers_identity_without_calling_domain_agent() -> None:
     """“你是谁”必须由 Supervisor 直接回答，不能读取候选人画像。"""
     supervisor, resume_agent, _ = build_supervisor()
     result = asyncio.run(
-        supervisor.handle(SupervisorRequest(message="你是谁", payload={}))
+        supervisor.handle(
+            SupervisorRequest(session_id=SESSION_ID, message="你是谁", payload={})
+        )
     )
 
     assert result.target_agent == "supervisor"
@@ -222,16 +231,58 @@ def test_supervisor_detects_pasted_jd_without_explicit_instruction() -> None:
         resume_agent=resume_agent,  # type: ignore[arg-type]
         job_agent=StubAnalyzingJobAgent(),  # type: ignore[arg-type]
         interview_agent=interview_agent,  # type: ignore[arg-type]
+        user_id=1,
     )
     jd_text = (
         "Java 后端实习生\n岗位职责：负责订单系统开发与维护。\n"
         "任职要求：熟悉 Java 和 MySQL，掌握 Redis，本科及以上学历，有项目经验者优先。"
     )
     result = asyncio.run(
-        supervisor.handle(SupervisorRequest(message=jd_text, payload={}))
+        supervisor.handle(
+            SupervisorRequest(session_id=SESSION_ID, message=jd_text, payload={})
+        )
     )
 
     assert result.target_agent == "job"
     assert result.action == "analyze_job"
     assert result.result["job"]["id"] == 31
     assert result.result["analysis"]["result"]["match_score"] == 80
+
+
+def test_supervisor_saves_checkpoint_with_stable_session_thread() -> None:
+    """同一 session_id 应写入可恢复的 Supervisor LangGraph Checkpoint。"""
+
+    async def run() -> None:
+        saver = InMemorySaver()
+        resume_agent = StubResumeAgent()
+        supervisor = SupervisorAgent(
+            model=StubRouteModel(),
+            resume_agent=resume_agent,  # type: ignore[arg-type]
+            job_agent=StubJobAgent(),  # type: ignore[arg-type]
+            interview_agent=StubInterviewAgent(),  # type: ignore[arg-type]
+            user_id=1,
+            checkpointer=saver,
+        )
+        await supervisor.handle(
+            SupervisorRequest(
+                session_id=SESSION_ID,
+                message="查看我的候选人画像",
+                payload={},
+            )
+        )
+
+        checkpoint = await saver.aget_tuple(
+            {
+                "configurable": {
+                    "thread_id": f"supervisor:user:1:session:{SESSION_ID}",
+                }
+            }
+        )
+
+        assert checkpoint is not None
+        state = checkpoint.checkpoint["channel_values"]
+        assert state["user_id"] == 1
+        assert state["session_id"] == SESSION_ID
+        assert state["final_result"]["target_agent"] == "resume"
+
+    asyncio.run(run())

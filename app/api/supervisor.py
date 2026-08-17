@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
+from redis.asyncio import Redis
 
 from app.agents.interview_agent import InterviewAgent
 from app.agents.job_agent import JobAgent
@@ -16,7 +17,10 @@ from app.api.persistence import (
     get_profile_storage_service,
     get_resume_storage_service,
 )
+from app.core.config import Settings, get_settings
 from app.llm.client import OpenAICompatibleClient
+from app.memory.checkpointer import RedisCheckpointSaver
+from app.memory.connection import get_redis_client
 from app.schemas.common import ApiResponse
 from app.schemas.supervisor import SupervisorRequest, SupervisorResponse
 from app.services.interview_service import InterviewService
@@ -57,6 +61,8 @@ def get_supervisor_agent(
     resume_agent: Annotated[ResumeAgent, Depends(get_resume_agent)],
     job_agent: Annotated[JobAgent, Depends(get_job_agent)],
     interview_service: Annotated[InterviewService, Depends(get_interview_service)],
+    client: Annotated[Redis, Depends(get_redis_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> SupervisorAgent:
     """Supervisor 只持有两个领域 Agent，不注入 Repository 或业务 Service。"""
     return SupervisorAgent(
@@ -64,6 +70,11 @@ def get_supervisor_agent(
         resume_agent=resume_agent,
         job_agent=job_agent,
         interview_agent=InterviewAgent(user_id=user_id, service=interview_service),
+        user_id=user_id,
+        checkpointer=RedisCheckpointSaver(
+            client,
+            ttl_seconds=settings.checkpoint_ttl_seconds,
+        ),
     )
 
 

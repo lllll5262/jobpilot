@@ -3,7 +3,6 @@
 import json
 from typing import Any, Literal
 
-from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.job_agent.prompt import build_job_agent_system_prompt
@@ -27,8 +26,6 @@ class JobAgentGraph:
         self,
         model: ToolCallingModel,
         tools: list[BaseAgentTool],
-        *,
-        checkpointer: BaseCheckpointSaver[Any] | None = None,
     ) -> None:
         self._model = model
         self._tools = {tool.name: tool for tool in tools}
@@ -48,23 +45,15 @@ class JobAgentGraph:
             {"tools": "tools", "end": END},
         )
         builder.add_edge("tools", "agent")
-        self._graph = builder.compile(checkpointer=checkpointer)
+        # 子 Agent 不单独保存 Checkpoint，避免与 Supervisor 的会话快照重复。
+        self._graph = builder.compile()
 
     async def run(
         self,
         state: JobAgentState,
-        *,
-        thread_id: str | None = None,
-        checkpoint_ns: str = "",
     ) -> JobAgentState:
         """执行一次有界 Agent 循环，防止模型异常导致无限调用。"""
-        config: dict[str, Any] = {"recursion_limit": 12}
-        if thread_id is not None:
-            config["configurable"] = {
-                "thread_id": thread_id,
-                "checkpoint_ns": checkpoint_ns,
-            }
-        return await self._graph.ainvoke(state, config=config)
+        return await self._graph.ainvoke(state, config={"recursion_limit": 12})
 
     async def _call_model(self, state: JobAgentState) -> dict[str, Any]:
         """只暴露当前状态所允许的下一步 Tool。"""

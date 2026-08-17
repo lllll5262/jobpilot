@@ -16,6 +16,7 @@ from app.schemas.resume import ResumeParseResult
 from app.services.analysis_storage_service import AnalysisStorageService
 from app.services.job_storage_service import JobStorageService
 from app.services.profile_storage_service import ProfileStorageService
+from app.services.resume_parser_service import ParsedResumeDocument
 from app.services.resume_storage_service import ResumeStorageService
 from app.services.user_service import UserService
 
@@ -107,6 +108,10 @@ class FakeResumeRepository:
             return self.record
         return None
 
+    async def delete(self, resume_id: int, *, user_id: int) -> None:
+        if self.record and self.record.id == resume_id and self.record.user_id == user_id:
+            self.record = None
+
 
 class FakeProfileRepository:
     """内存 Profile Repository。"""
@@ -190,9 +195,24 @@ class FakeAnalysisRepository:
 class StubResumeParserService:
     """固定返回结构化 Resume。"""
 
-    async def parse(self, pdf_content: bytes) -> ResumeParseResult:
+    async def parse_with_source(self, pdf_content: bytes) -> ParsedResumeDocument:
+        """持久化流程还需要完整文本用于 MongoDB 和 Milvus。"""
         assert pdf_content.startswith(b"%PDF-")
-        return ResumeParseResult.model_validate(RESUME_DATA)
+        return ParsedResumeDocument(
+            resume=ResumeParseResult.model_validate(RESUME_DATA),
+            cleaned_text="测试用户 Java 后端开发简历",
+        )
+
+
+class FakeResumeKnowledgeService:
+    """避免持久化闭环测试连接真实 MongoDB 和 Milvus。"""
+
+    def __init__(self) -> None:
+        self.saved_resume_id: int | None = None
+
+    async def save(self, **values: Any) -> None:
+        self.saved_resume_id = values["resume_id"]
+
 
 
 class StubProfileBuilderService:
@@ -244,6 +264,8 @@ def test_persistence_routes_are_registered() -> None:
     assert {
         "/users",
         "/users/{user_id}/resumes/parse",
+        "/users/{user_id}/resumes/search",
+        "/users/{user_id}/resumes/{resume_id}/source",
         "/users/{user_id}/profiles/build",
         "/users/{user_id}/profile",
         "/users/{user_id}/jobs/parse",
@@ -271,6 +293,7 @@ def test_persistence_services_complete_closed_loop() -> None:
             StubResumeParserService(),
             resume_repository,
             user_repository,
+            FakeResumeKnowledgeService(),  # type: ignore[arg-type]
         )
         resume = await resume_service.parse_and_save(
             user_id=user.id,

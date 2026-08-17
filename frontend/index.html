@@ -48,12 +48,11 @@
           </div>
           <div class="top-actions">
             <div class="agent-switcher">
-              <button id="agent-switch" type="button">切换 Agent <span>⌄</span></button>
+              <button id="agent-switch" type="button"><b id="current-model-label">Qwen</b> <span>⌄</span></button>
               <div class="agent-menu" id="agent-menu" role="menu">
-                <button type="button" data-agent="supervisor"><span class="agent-icon purple">✦</span><b>Supervisor</b><small>智能调度</small></button>
-                <button type="button" data-agent="job"><span class="agent-icon green">◇</span><b>Job Analyst</b><small>JD 与岗位匹配</small></button>
-                <button type="button" data-agent="resume"><span class="agent-icon blue">▤</span><b>Resume Expert</b><small>简历与画像</small></button>
-                <button type="button" data-agent="interview"><span class="agent-icon orange">◎</span><b>Interview Coach</b><small>模拟面试</small></button>
+                <button type="button" data-model="qwen"><span class="agent-icon purple">Q</span><b>Qwen</b><small>通义千问</small></button>
+                <button type="button" data-model="deepseek"><span class="agent-icon blue">D</span><b>DeepSeek</b><small>深度求索</small></button>
+                <button type="button" data-model="glm"><span class="agent-icon green">G</span><b>GLM</b><small>智谱 AI</small></button>
               </div>
             </div>
             <button class="icon-button" id="theme-toggle" type="button" aria-label="切换主题">☼</button>

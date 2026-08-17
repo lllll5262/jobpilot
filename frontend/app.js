@@ -1,6 +1,7 @@
 const state = {
   agent: "supervisor",
   preferredAgent: null,
+  model: "qwen",
   loading: false,
   lastMessage: "",
   context: { userId: 1, jobId: null, resumeId: null, interviewId: null, questionId: null },
@@ -18,6 +19,12 @@ const agentInfo = {
   job: { name: "Job Analyst", title: "Job Agent", icon: "◇", color: "green", description: "负责解析 JD、岗位匹配和差距分析" },
   resume: { name: "Resume Expert", title: "Resume Agent", icon: "▤", color: "blue", description: "负责简历解析、候选人画像和针对性优化" },
   interview: { name: "Interview Coach", title: "Interview Agent", icon: "◎", color: "orange", description: "负责模拟面试、答案评价与薄弱点追问" },
+};
+
+const modelInfo = {
+  qwen: "Qwen",
+  deepseek: "DeepSeek",
+  glm: "GLM",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -70,6 +77,7 @@ function saveActiveConversation() {
   conversation.agent = state.agent;
   conversation.preferredAgent = state.preferredAgent;
   conversation.lastMessage = state.lastMessage;
+  conversation.model = state.model;
   persistConversations();
 }
 
@@ -100,6 +108,7 @@ function createConversation() {
     agent: "supervisor",
     preferredAgent: null,
     lastMessage: "",
+    model: state.model,
   };
   state.conversations.unshift(conversation);
   state.activeConversationId = conversation.id;
@@ -131,8 +140,10 @@ function openConversation(conversationId) {
   };
   state.preferredAgent = conversation.preferredAgent || null;
   state.lastMessage = conversation.lastMessage || "";
+  state.model = conversation.model || state.model;
   feed.innerHTML = conversation.messagesHtml || "";
   setAgent(conversation.agent || "supervisor");
+  setModel(state.model);
   if (!feed.children.length) welcome();
   localStorage.setItem("jobpilot-context", JSON.stringify(state.context));
   renderRecents();
@@ -342,6 +353,7 @@ async function uploadResume(file) {
     formData.append("file", file);
     const resumeResponse = await fetch(`/users/${state.context.userId}/resumes/parse`, {
       method: "POST",
+      headers: { "X-LLM-Provider": state.model },
       body: formData,
     });
     const resume = await readApiResponse(resumeResponse);
@@ -352,7 +364,10 @@ async function uploadResume(file) {
     try {
       const profileResponse = await fetch(`/users/${state.context.userId}/profiles/build`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-LLM-Provider": state.model,
+        },
         body: JSON.stringify({ resume_id: resume.id }),
       });
       const profile = await readApiResponse(profileResponse);
@@ -458,8 +473,15 @@ async function sendMessage(forcedMessage) {
     const payload = buildPayload(message);
     const response = await fetch(`/users/${state.context.userId}/supervisor`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: buildDispatchMessage(message, payload), payload }),
+      headers: {
+        "Content-Type": "application/json",
+        "X-LLM-Provider": state.model,
+      },
+      body: JSON.stringify({
+        session_id: state.activeConversationId,
+        message: buildDispatchMessage(message, payload),
+        payload,
+      }),
     });
     const data = await readApiResponse(response);
     loadingCard.querySelector(".message-content").innerHTML = humanizeResult(data);
@@ -506,6 +528,20 @@ function setAgent(agent, userSelected = false) {
   else input.placeholder = "给 JobPilot 发送消息，或输入 / 选择指令";
 }
 
+function setModel(model) {
+  if (!modelInfo[model]) return;
+  state.model = model;
+  $("#current-model-label").textContent = modelInfo[model];
+  $$('[data-model]').forEach((button) => button.classList.toggle("active", button.dataset.model === model));
+  $("#agent-menu").classList.remove("open");
+  localStorage.setItem("jobpilot-model", model);
+  const conversation = activeConversation();
+  if (conversation) {
+    conversation.model = model;
+    persistConversations();
+  }
+}
+
 function bindEvents() {
   $("#send-button").addEventListener("click", () => sendMessage());
   $("#attachment-button").addEventListener("click", () => $("#resume-file").click());
@@ -520,7 +556,8 @@ function bindEvents() {
     if (button) openConversation(button.dataset.conversationId);
   });
   $("#agent-switch").addEventListener("click", () => $("#agent-menu").classList.toggle("open"));
-  $("#side-switch").addEventListener("click", () => $("#agent-menu").classList.toggle("open"));
+  $("#side-switch").addEventListener("click", () => setAgent("supervisor", true));
+  $$('[data-model]').forEach((button) => button.addEventListener("click", () => setModel(button.dataset.model)));
   $$('[data-agent]').forEach((button) => button.addEventListener("click", () => setAgent(button.dataset.agent, true)));
   $("#theme-toggle").addEventListener("click", () => document.body.classList.toggle("dark"));
   $("#mobile-menu").addEventListener("click", () => $("#sidebar").classList.add("open"));
@@ -566,6 +603,8 @@ function bindEvents() {
 }
 
 function init() {
+  const savedModel = localStorage.getItem("jobpilot-model");
+  if (savedModel && modelInfo[savedModel]) state.model = savedModel;
   const saved = localStorage.getItem("jobpilot-context");
   if (saved) {
     try { state.context = { ...state.context, ...JSON.parse(saved) }; } catch (_) { /* 忽略损坏的本地设置 */ }
@@ -584,6 +623,7 @@ function init() {
     state.context = { ...state.context, ...conversation.context };
     state.preferredAgent = conversation.preferredAgent || null;
     state.lastMessage = conversation.lastMessage || "";
+    state.model = conversation.model || state.model;
     feed.innerHTML = conversation.messagesHtml || "";
     setAgent(conversation.agent || "supervisor");
     if (!feed.children.length) welcome();
@@ -591,6 +631,7 @@ function init() {
     createConversation();
   }
   renderRecents();
+  setModel(state.model);
   updateUsage();
   bindEvents();
 }

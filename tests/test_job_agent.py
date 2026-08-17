@@ -151,14 +151,18 @@ def test_job_agent_route_is_registered() -> None:
 
 
 @pytest.mark.parametrize(
-    ("provider", "expects_thinking_option"),
-    [("qwen", True), ("deepseek", False)],
+    ("provider", "thinking_option"),
+    [
+        ("qwen", ("enable_thinking", False)),
+        ("deepseek", ("thinking", {"type": "disabled"})),
+        ("glm", ("thinking", {"type": "disabled"})),
+    ],
 )
 def test_tool_calling_client_forces_named_tool(
     provider: LLMProvider,
-    expects_thinking_option: bool,
+    thinking_option: tuple[str, Any],
 ) -> None:
-    """兼容客户端应使用两家供应商都支持的具名 Tool Choice。"""
+    """兼容客户端应使用三家供应商都支持的具名 Tool Choice。"""
     captured_body: dict[str, Any] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -216,10 +220,8 @@ def test_tool_calling_client_forces_named_tool(
         "type": "function",
         "function": {"name": "get_candidate_profile"},
     }
-    if expects_thinking_option:
-        assert captured_body["enable_thinking"] is False
-    else:
-        assert "enable_thinking" not in captured_body
+    option_name, option_value = thinking_option
+    assert captured_body[option_name] == option_value
 
 
 def test_job_agent_completes_tool_calling_workflow() -> None:

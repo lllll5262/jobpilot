@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# RAGAS 仅用于离线质量评估，不进入线上请求链路。
+ragas>=0.4.3,<0.5.0
+openai>=1.0.0,<3.0.0

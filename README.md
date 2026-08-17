@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。阶段 5 使用 MySQL 持久化用户、Resume、Candidate Profile、JD 和岗位分析结果。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。MySQL 保存业务关系，MongoDB 保存完整简历原文，Milvus 保存可检索的简历父子块向量。
 
 ## 环境要求
 
@@ -20,7 +20,7 @@ uvicorn app.main:app --reload
 
 - 健康检查：`http://127.0.0.1:8000/health`
 - JD 解析：`POST http://127.0.0.1:8000/jobs/parse`
-- 简历解析：`POST http://127.0.0.1:8000/resumes/parse`
+- 简历上传：`POST http://127.0.0.1:8000/users/{user_id}/resumes/parse`
 - 能力画像：`POST http://127.0.0.1:8000/profiles/build`
 - 岗位匹配：`POST http://127.0.0.1:8000/matches/evaluate`
 - 持久化工作流：见下方“数据库持久化”
@@ -67,12 +67,25 @@ Invoke-RestMethod `
 上传字段名为 `file`，当前只支持带有文本层的 PDF，不支持图片扫描件和 OCR。可在 Swagger 文档中直接上传，也可以使用：
 
 ```powershell
-curl.exe -X POST "http://127.0.0.1:8000/resumes/parse" `
+curl.exe -X POST "http://127.0.0.1:8000/users/1/resumes/parse" `
   -H "accept: application/json" `
   -F "file=@E:/path/to/resume.pdf;type=application/pdf"
 ```
 
 默认限制为 10 MB、20 页和 50000 个提取字符，可通过 `.env` 中的 `JOBPILOT_RESUME_*` 配置调整。
+
+持久化上传接口 `POST /users/{user_id}/resumes/parse` 还会执行以下流程：
+
+```text
+PDF → 清洗后完整正文 → MongoDB（来源与结构化结果）
+                  └→ 父块 1000 字符 → 子块 400 字符
+                                    └→ BGE-M3 稠密/稀疏向量 → Milvus
+```
+
+Milvus 使用稠密向量和稀疏向量双路召回，并通过 `WeightedRanker(0.7, 0.3)`
+融合排序，不依赖 Elasticsearch。`POST /users/{user_id}/resumes/search` 用于检索相关
+子块并返回对应父块，`GET /users/{user_id}/resumes/{resume_id}/source` 用于读取 MongoDB
+中的完整原文进行来源核验。MySQL 中的 Resume ID 继续作为 Profile 和 Interview 的外键。
 
 ## 候选人能力画像
 
@@ -119,6 +132,8 @@ Get-Content "database/jobpilot_schema.sql" -Raw | mysql -h <mysql-host> -P <mysq
 
 - `POST /users`：创建用户
 - `POST /users/{user_id}/resumes/parse`：解析并保存 Resume
+- `POST /users/{user_id}/resumes/search`：Milvus 稠密/稀疏混合检索
+- `GET /users/{user_id}/resumes/{resume_id}/source`：查看 MongoDB 完整简历来源
 - `POST /users/{user_id}/profiles/build`：构建并保存当前 Profile
 - `GET /users/{user_id}/profile`：查看当前 Profile
 - `POST /users/{user_id}/jobs/parse`：解析并保存 JD
@@ -149,7 +164,7 @@ Tool 只负责读取可信 Agent State 并调用 Service；JD 解析、匹配规
 
 ## 多轮会话与 Redis Memory
 
-阶段 7 新增 `POST /users/{user_id}/agents/job/chat`。同一个 `session_id` 会读取最近 N 轮对话与最近岗位分析缓存，因此可以继续追问“刚才那个岗位”。首次分析请求：
+阶段 7 新增 `POST /users/{user_id}/agents/job/chat`。同一个 `session_id` 会读取最近 N 轮对话与最近岗位分析缓存，因此可以继续追问“刚才那个岗位”。该兼容接口不再单独保存 Job Agent Checkpoint；统一前端会话只由 Supervisor 保存 LangGraph Checkpoint。首次分析请求：
 
 ```json
 {
@@ -177,7 +192,7 @@ jobpilot:cache:*        # 最近岗位分析上下文
 jobpilot:checkpoint:*   # LangGraph 执行状态
 ```
 
-当前实现使用 `redis-py asyncio` 和普通 Redis 命令实现 LangGraph Checkpointer，不要求 RedisJSON 或 RediSearch。MySQL 仍是用户、简历、Profile、岗位和分析结果的唯一事实来源；Redis 数据均设置 TTL。
+当前实现使用 `redis-py asyncio` 和普通 Redis 命令实现 LangGraph Checkpointer，不要求 RedisJSON 或 RediSearch。MySQL 保存业务关系，MongoDB 保存完整简历来源，Milvus 保存简历检索块；Redis 数据均设置 TTL。
 
 ## 多岗位对比与技能差距
 
@@ -255,11 +270,15 @@ get_candidate_profile
 
 统一入口为 `POST /users/{user_id}/supervisor`。Supervisor 只识别意图、选择领域
 Agent、转交原始 payload 并组合结果，不调用 Repository 或具体业务 Service。
+同一个前端对话应始终传递相同的 `session_id`。Supervisor 使用该标识生成稳定的
+LangGraph `thread_id`，并将带 TTL 的执行快照保存到 Redis；顶层 Graph 使用
+LangGraph 默认的 Checkpoint Namespace。
 
 查看当前 Profile：
 
 ```json
 {
+  "session_id": "supervisor-session-001",
   "message": "查看我的候选人画像",
   "payload": {}
 }
@@ -269,6 +288,7 @@ Agent、转交原始 payload 并组合结果，不调用 Repository 或具体业
 
 ```json
 {
+  "session_id": "supervisor-session-001",
   "message": "根据我的简历开始模拟面试",
   "payload": {"job_id": 1}
 }
@@ -278,6 +298,7 @@ Agent、转交原始 payload 并组合结果，不调用 Repository 或具体业
 
 ```json
 {
+  "session_id": "supervisor-session-001",
   "message": "这是我对当前问题的回答，请评价并继续提问",
   "payload": {
     "interview_id": 1,
@@ -297,6 +318,11 @@ payload 原样传递，Supervisor 模型不能查看或改写这些参数。
 FastAPI 同时托管 JobPilot 前端。启动服务后访问 `http://127.0.0.1:8000/`，系统会
 自动进入 `/ui/`。界面包含聊天、Agent 切换、最近对话、简历快捷操作、无限轮面试、
 上下文 ID 设置、使用统计、暗色主题和移动端布局，不需要单独启动 Node 服务。
+
+顶部模型菜单支持按请求切换 Qwen、DeepSeek 和 GLM。浏览器通过
+`X-LLM-Provider` 请求头传递选择，Supervisor 及其委派的领域 Agent 在同一次请求中共用
+该模型。请在 `.env` 中分别配置 `JOBPILOT_QWEN_*`、`JOBPILOT_DEEPSEEK_*` 和
+`JOBPILOT_GLM_*`；未配置 API Key 的模型会返回明确的 503 配置错误。
 
 完整表结构与初始化说明见 [DATABASE.md](DATABASE.md)。
 
