@@ -1,6 +1,7 @@
 """阶段 5 持久化分层测试，不连接真实 MySQL。"""
 
 import asyncio
+import hashlib
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -121,6 +122,15 @@ class FakeResumeRepository:
 
     async def get_by_id(self, resume_id: int, *, user_id: int) -> Any:
         if self.record and self.record.id == resume_id and self.record.user_id == user_id:
+            return self.record
+        return None
+
+    async def get_by_hash(self, *, user_id: int, doc_hash: str) -> Any:
+        if (
+            self.record
+            and self.record.user_id == user_id
+            and self.record.doc_hash == doc_hash
+        ):
             return self.record
         return None
 
@@ -249,6 +259,10 @@ class FakeResumeObjectStore:
     async def create_download_url(self, *, bucket: str, object_key: str) -> str:
         return f"https://minio.example/{bucket}/{object_key}"
 
+    async def read(self, *, bucket: str, object_key: str) -> bytes:
+        del bucket, object_key
+        return b"%PDF-test"
+
     async def delete(self, *, bucket: str, object_key: str) -> None:
         del bucket, object_key
         self.deleted = True
@@ -308,6 +322,12 @@ def test_metadata_contains_stage5_tables() -> None:
         "storage_uri",
         "object_etag",
     }.issubset(Base.metadata.tables["resumes"].columns.keys())
+    unique_indexes = {
+        index.name
+        for index in Base.metadata.tables["resumes"].indexes
+        if index.unique
+    }
+    assert "uq_resumes_user_doc_hash" in unique_indexes
 
 
 def test_persistence_routes_are_registered() -> None:
@@ -316,6 +336,8 @@ def test_persistence_routes_are_registered() -> None:
     assert {
         "/users",
         "/users/{user_id}/resumes/parse",
+        "/users/{user_id}/resumes/parse-async",
+        "/users/{user_id}/resumes/ingestions/{task_id}",
         "/users/{user_id}/resumes/search",
         "/users/{user_id}/resumes/{resume_id}/source",
         "/users/{user_id}/profiles/build",
@@ -438,5 +460,59 @@ def test_resume_storage_rolls_back_mysql_and_minio_when_milvus_fails() -> None:
 
         assert resume_repository.record is None
         assert object_store.deleted is True
+
+    asyncio.run(run())
+
+
+def test_resume_storage_returns_duplicate_before_parsing_and_external_writes() -> None:
+    """相同用户和内容指纹命中时不得重复解析、上传或向量化。"""
+
+    class UnexpectedParser:
+        async def parse_with_source(self, _: bytes) -> ParsedResumeDocument:
+            raise AssertionError("duplicate resume must not be parsed")
+
+    class UnexpectedKnowledgeService:
+        async def save(self, **_: Any) -> None:
+            raise AssertionError("duplicate resume must not be vectorized")
+
+    class UnexpectedObjectStore(FakeResumeObjectStore):
+        async def save(self, **_: Any) -> ResumeObjectMetadata:
+            raise AssertionError("duplicate resume must not be uploaded")
+
+    async def run() -> None:
+        pdf_content = b"%PDF-duplicate"
+        user_repository = FakeUserRepository()
+        await UserService(user_repository).create(
+            UserCreateRequest(email="dedupe@example.com", name="去重测试")
+        )
+        resume_repository = FakeResumeRepository()
+        await resume_repository.create(
+            user_id=1,
+            filename="resume.pdf",
+            doc_hash=hashlib.sha256(pdf_content).hexdigest(),
+            file_size_bytes=len(pdf_content),
+            content_type="application/pdf",
+            storage_bucket="jobpilot-resumes",
+            storage_object_key="users/1/resumes/existing.pdf",
+            storage_uri="s3://jobpilot-resumes/users/1/resumes/existing.pdf",
+            object_etag="existing-etag",
+            parsed_data=RESUME_DATA,
+        )
+        service = ResumeStorageService(
+            UnexpectedParser(),  # type: ignore[arg-type]
+            resume_repository,
+            user_repository,
+            UnexpectedKnowledgeService(),  # type: ignore[arg-type]
+            UnexpectedObjectStore(),
+        )
+
+        result = await service.parse_and_save(
+            user_id=1,
+            filename="duplicate.pdf",
+            pdf_content=pdf_content,
+        )
+
+        assert result.id == 10
+        assert result.doc_hash == hashlib.sha256(pdf_content).hexdigest()
 
     asyncio.run(run())

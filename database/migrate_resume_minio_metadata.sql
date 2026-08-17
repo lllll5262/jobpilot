@@ -11,6 +11,7 @@ ALTER TABLE `resumes`
   ADD COLUMN `storage_object_key` VARCHAR(512) NULL AFTER `storage_bucket`,
   ADD COLUMN `storage_uri` VARCHAR(1024) NULL AFTER `storage_object_key`,
   ADD COLUMN `object_etag` VARCHAR(128) NULL AFTER `storage_uri`,
+  ADD UNIQUE INDEX `uq_resumes_user_doc_hash` (`user_id`, `doc_hash`),
   ADD UNIQUE INDEX `uq_resumes_storage_object` (`storage_bucket`, `storage_object_key`);
 
--- 旧记录没有原始 PDF 对象，以上字段保留 NULL；重新上传后新记录会完整写入元数据。
+-- MySQL 允许唯一索引包含多个 NULL，因此旧记录可保留 NULL；重新上传后新记录会完整写入元数据。

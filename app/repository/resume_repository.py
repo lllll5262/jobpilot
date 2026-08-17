@@ -32,6 +32,14 @@ class ResumeRepository:
         )
         return (await self._session.execute(statement)).scalar_one_or_none()
 
+    async def get_by_hash(self, *, user_id: int, doc_hash: str) -> Resume | None:
+        """按用户和 SHA-256 内容指纹查找已完成的 Resume。"""
+        statement = select(Resume).where(
+            Resume.user_id == user_id,
+            Resume.doc_hash == doc_hash,
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
     async def create(
         self,
         *,
@@ -60,7 +68,11 @@ class ResumeRepository:
             parsed_data=parsed_data,
         )
         self._session.add(resume)
-        await self._session.commit()
+        try:
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
         await self._session.refresh(resume)
         return resume
 

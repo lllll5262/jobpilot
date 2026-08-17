@@ -1,6 +1,7 @@
 """数据库持久化接口的数据模型。"""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -53,6 +54,22 @@ class ResumeRecord(BaseModel):
     storage_uri: str | None = None
     resume: ResumeParseResult
     created_at: datetime
+
+
+class ResumeIngestionSubmission(BaseModel):
+    """异步简历入库的提交结果；重复资料会直接完成而不创建任务。"""
+
+    task_id: str | None = None
+    status: Literal["queued", "completed"]
+    resume: ResumeRecord | None = None
+
+
+class ResumeIngestionStatus(BaseModel):
+    """Celery 简历入库任务的可公开状态。"""
+
+    task_id: str
+    status: Literal["pending", "started", "retry", "succeeded", "failed"]
+    resume: ResumeRecord | None = None
 
 
 class ProfileBuildStoredRequest(PersistenceRequest):

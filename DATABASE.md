@@ -1,6 +1,6 @@
 # JobPilot 数据库说明
 
-阶段 5 使用 MySQL 8、SQLAlchemy 2.x Async 和 aiomysql。数据库名为 `jobpilot`，字符集为 `utf8mb4`。原始简历 PDF 保存在 MinIO，MySQL 仅保存稳定对象地址和元数据。真实连接凭据只能存放在本地 `.env`。
+阶段 5 使用 MySQL 8、SQLAlchemy 2.x Async 和 aiomysql。数据库名为 `jobpilot`，字符集为 `utf8mb4`。原始简历 PDF 保存在 MinIO，MySQL 仅保存稳定对象地址和元数据，BGE-M3 向量保存在 Milvus，异步入库由 Celery 编排。系统不依赖 Elasticsearch。真实连接凭据只能存放在本地 `.env`。
 
 ## 表结构
 
@@ -31,7 +31,12 @@
 | created_at | DATETIME | 创建时间 |
 
 原始 PDF 二进制不进入 MySQL。下载接口根据 bucket 和 object key 动态生成短时签名
-URL，数据库不保存会过期的签名地址。
+URL，数据库不保存会过期的签名地址。`(user_id, doc_hash)` 唯一索引确保同一用户的
+相同文件只生成一条 Resume；不同用户之间保持数据隔离。
+
+同步和 Celery 异步入库最终都依赖 `(user_id, doc_hash)` 唯一索引处理并发竞争。
+异步任务发布前写入的 MinIO 对象，在队列发布失败、内容校验失败、重复命中或 Milvus
+索引失败时会执行补偿删除；MySQL 结构不需要额外的 Celery 任务表。
 
 ### candidate_profiles
 

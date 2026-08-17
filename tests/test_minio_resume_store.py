@@ -52,8 +52,31 @@ class FakeMinioClient:
         assert expires == timedelta(minutes=15)
         return f"https://minio.example/{bucket}/{object_key}?signature=test"
 
+    def get_object(self, bucket: str, object_key: str) -> Any:
+        assert bucket == "jobpilot-resumes"
+        assert object_key.endswith(".pdf")
+        return FakeObjectResponse(b"%PDF-staged")
+
     def remove_object(self, bucket: str, object_key: str) -> None:
         self.deleted = (bucket, object_key)
+
+
+class FakeObjectResponse:
+    """模拟 MinIO 流式响应并记录连接释放。"""
+
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+        self.closed = False
+        self.released = False
+
+    def read(self) -> bytes:
+        return self._content
+
+    def close(self) -> None:
+        self.closed = True
+
+    def release_conn(self) -> None:
+        self.released = True
 
 
 def test_minio_store_saves_private_pdf_and_returns_stable_metadata() -> None:
@@ -96,6 +119,12 @@ def test_minio_store_saves_private_pdf_and_returns_stable_metadata() -> None:
             object_key=metadata.object_key,
         )
         assert "signature=test" in download_url
+
+        staged_content = await store.read(
+            bucket=metadata.bucket,
+            object_key=metadata.object_key,
+        )
+        assert staged_content == b"%PDF-staged"
 
         await store.delete(bucket=metadata.bucket, object_key=metadata.object_key)
         assert client.deleted == (metadata.bucket, metadata.object_key)

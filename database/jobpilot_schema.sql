@@ -35,6 +35,7 @@ CREATE TABLE `resumes` (
   CONSTRAINT `fk_resumes_user_id_users`
     FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   INDEX `ix_resumes_user_created` (`user_id`, `created_at`),
+  UNIQUE INDEX `uq_resumes_user_doc_hash` (`user_id`, `doc_hash`),
   UNIQUE INDEX `uq_resumes_storage_object` (`storage_bucket`, `storage_object_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

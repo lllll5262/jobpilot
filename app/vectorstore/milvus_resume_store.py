@@ -20,20 +20,27 @@ class MilvusResumeVectorStore:
         token: str | None,
         database: str,
         collection: str,
+        collection_version: str,
+        alias: str,
         model_path: str,
         device: str,
         use_fp16: bool,
+        embedding_batch_size: int,
     ) -> None:
         self._uri = uri
         self._token = token
         self._database = database
-        self._collection_name = collection
+        self._legacy_collection_name = collection
+        self._physical_collection_name = f"{collection}_{collection_version}"
+        self._collection_name = alias
         self._model_path = model_path
         self._device = device
         self._use_fp16 = use_fp16
+        self._embedding_batch_size = embedding_batch_size
         self._client: Any | None = None
         self._embedding: Any | None = None
         self._init_lock = Lock()
+        self._embedding_lock = Lock()
 
     def _ensure_initialized(self) -> None:
         """首次读写时加载本地 BGE-M3 并创建 Milvus Collection。"""
@@ -59,50 +66,77 @@ class MilvusResumeVectorStore:
                 client_options["token"] = self._token
             client = MilvusClient(**client_options)
 
-            if not client.has_collection(self._collection_name):
-                schema = MilvusClient.create_schema(
-                    auto_id=False,
-                    enable_dynamic_field=False,
-                )
-                schema.add_field("id", DataType.VARCHAR, is_primary=True, max_length=160)
-                schema.add_field("user_id", DataType.INT64)
-                schema.add_field("resume_id", DataType.INT64)
-                schema.add_field("doc_hash", DataType.VARCHAR, max_length=64)
-                schema.add_field("parent_id", DataType.VARCHAR, max_length=128)
-                schema.add_field("parent_index", DataType.INT64)
-                schema.add_field("child_index", DataType.INT64)
-                schema.add_field("text", DataType.VARCHAR, max_length=8_192)
-                schema.add_field("parent_content", DataType.VARCHAR, max_length=16_384)
-                schema.add_field(
-                    "dense_vector",
-                    DataType.FLOAT_VECTOR,
-                    dim=embedding.dim["dense"],
-                )
-                schema.add_field("sparse_vector", DataType.SPARSE_FLOAT_VECTOR)
-
-                indexes = client.prepare_index_params()
-                indexes.add_index(
-                    field_name="dense_vector",
-                    index_name="dense_index",
-                    index_type="IVF_FLAT",
-                    metric_type="IP",
-                    params={"nlist": 128},
-                )
-                indexes.add_index(
-                    field_name="sparse_vector",
-                    index_name="sparse_index",
-                    index_type="SPARSE_INVERTED_INDEX",
-                    metric_type="IP",
-                    params={"drop_ratio_build": 0.2},
-                )
-                client.create_collection(
-                    collection_name=self._collection_name,
-                    schema=schema,
-                    index_params=indexes,
-                )
+            aliases = client.list_aliases()
+            if self._collection_name not in aliases:
+                if client.has_collection(self._physical_collection_name):
+                    target_collection = self._physical_collection_name
+                elif client.has_collection(self._legacy_collection_name):
+                    # 首次升级时让别名指向旧 Collection，避免已有向量不可见。
+                    target_collection = self._legacy_collection_name
+                else:
+                    self._create_collection(
+                        client=client,
+                        collection_name=self._physical_collection_name,
+                        embedding=embedding,
+                        milvus_client_type=MilvusClient,
+                        data_type=DataType,
+                    )
+                    target_collection = self._physical_collection_name
+                client.create_alias(target_collection, self._collection_name)
             client.load_collection(self._collection_name)
             self._embedding = embedding
             self._client = client
+
+    @staticmethod
+    def _create_collection(
+        *,
+        client: Any,
+        collection_name: str,
+        embedding: Any,
+        milvus_client_type: Any,
+        data_type: Any,
+    ) -> None:
+        """创建一个可由 Alias 原子切换的版本化物理 Collection。"""
+        schema = milvus_client_type.create_schema(
+            auto_id=False,
+            enable_dynamic_field=False,
+        )
+        schema.add_field("id", data_type.VARCHAR, is_primary=True, max_length=160)
+        schema.add_field("user_id", data_type.INT64)
+        schema.add_field("resume_id", data_type.INT64)
+        schema.add_field("doc_hash", data_type.VARCHAR, max_length=64)
+        schema.add_field("parent_id", data_type.VARCHAR, max_length=128)
+        schema.add_field("parent_index", data_type.INT64)
+        schema.add_field("child_index", data_type.INT64)
+        schema.add_field("text", data_type.VARCHAR, max_length=8_192)
+        schema.add_field("parent_content", data_type.VARCHAR, max_length=16_384)
+        schema.add_field(
+            "dense_vector",
+            data_type.FLOAT_VECTOR,
+            dim=embedding.dim["dense"],
+        )
+        schema.add_field("sparse_vector", data_type.SPARSE_FLOAT_VECTOR)
+
+        indexes = client.prepare_index_params()
+        indexes.add_index(
+            field_name="dense_vector",
+            index_name="dense_index",
+            index_type="IVF_FLAT",
+            metric_type="IP",
+            params={"nlist": 128},
+        )
+        indexes.add_index(
+            field_name="sparse_vector",
+            index_name="sparse_index",
+            index_type="SPARSE_INVERTED_INDEX",
+            metric_type="IP",
+            params={"drop_ratio_build": 0.2},
+        )
+        client.create_collection(
+            collection_name=collection_name,
+            schema=schema,
+            index_params=indexes,
+        )
 
     @staticmethod
     def _sparse_row(matrix: Any, row: int) -> dict[int, float]:
@@ -135,26 +169,29 @@ class MilvusResumeVectorStore:
         if not chunks:
             raise ValueError("resume chunks must not be empty")
         self._ensure_initialized()
-        embeddings = self._embedding.encode_documents([chunk.text for chunk in chunks])
-        entities = [
-            {
-                "id": chunk.chunk_id,
-                "user_id": user_id,
-                "resume_id": resume_id,
-                "doc_hash": doc_hash,
-                "parent_id": chunk.parent_id,
-                "parent_index": chunk.parent_index,
-                "child_index": chunk.child_index,
-                "text": chunk.text,
-                "parent_content": chunk.parent_content,
-                "dense_vector": embeddings["dense"][index].tolist(),
-                "sparse_vector": self._sparse_row(embeddings["sparse"], index),
-            }
-            for index, chunk in enumerate(chunks)
-        ]
         filter_expression = f"user_id == {user_id} and resume_id == {resume_id}"
         self._client.delete(self._collection_name, filter=filter_expression)
-        self._client.insert(self._collection_name, entities)
+        for start in range(0, len(chunks), self._embedding_batch_size):
+            batch = chunks[start : start + self._embedding_batch_size]
+            with self._embedding_lock:
+                embeddings = self._embedding.encode_documents([chunk.text for chunk in batch])
+            entities = [
+                {
+                    "id": chunk.chunk_id,
+                    "user_id": user_id,
+                    "resume_id": resume_id,
+                    "doc_hash": doc_hash,
+                    "parent_id": chunk.parent_id,
+                    "parent_index": chunk.parent_index,
+                    "child_index": chunk.child_index,
+                    "text": chunk.text,
+                    "parent_content": chunk.parent_content,
+                    "dense_vector": embeddings["dense"][index].tolist(),
+                    "sparse_vector": self._sparse_row(embeddings["sparse"], index),
+                }
+                for index, chunk in enumerate(batch)
+            ]
+            self._client.insert(self._collection_name, entities)
 
     async def search(
         self,
@@ -178,7 +215,8 @@ class MilvusResumeVectorStore:
         from pymilvus.exceptions import MilvusException
 
         self._ensure_initialized()
-        embeddings = self._embedding.encode_queries([query])
+        with self._embedding_lock:
+            embeddings = self._embedding.encode_queries([query])
         dense_request = AnnSearchRequest(
             data=[embeddings["dense"][0].tolist()],
             anns_field="dense_vector",

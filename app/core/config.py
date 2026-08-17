@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     )
     database_echo: bool = False
     redis_url: SecretStr = SecretStr("redis://:password@127.0.0.1:6379/0")
+    celery_broker_url: SecretStr = SecretStr("redis://:password@127.0.0.1:6379/1")
+    celery_result_backend: SecretStr = SecretStr("redis://:password@127.0.0.1:6379/2")
+    celery_task_soft_time_limit_seconds: int = Field(default=840, ge=60, le=3_600)
+    celery_task_time_limit_seconds: int = Field(default=900, ge=60, le=3_900)
     session_ttl_seconds: int = Field(default=86_400, ge=300, le=2_592_000)
     conversation_max_turns: int = Field(default=10, ge=1, le=50)
     agent_cache_ttl_seconds: int = Field(default=3_600, ge=60, le=86_400)
@@ -54,9 +58,12 @@ class Settings(BaseSettings):
     milvus_token: SecretStr | None = None
     milvus_database: str = "default"
     milvus_resume_collection: str = "jobpilot_resume_chunks"
+    milvus_resume_collection_version: str = Field(default="v1", pattern=r"^v[1-9]\d*$")
+    milvus_resume_alias: str = "jobpilot_resume_chunks_current"
     resume_embedding_model_path: str = "models/bge-m3"
     resume_embedding_device: str = "cpu"
     resume_embedding_use_fp16: bool = False
+    resume_embedding_batch_size: int = Field(default=16, ge=1, le=256)
     resume_parent_chunk_size: int = Field(default=1_000, ge=400, le=4_000)
     resume_child_chunk_size: int = Field(default=400, ge=100, le=1_500)
     resume_chunk_overlap: int = Field(default=100, ge=0, le=500)

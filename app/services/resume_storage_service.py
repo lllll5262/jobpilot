@@ -3,6 +3,9 @@
 import hashlib
 import logging
 from contextlib import suppress
+from dataclasses import dataclass
+
+from sqlalchemy.exc import IntegrityError
 
 from app.core.exceptions import AppException
 from app.models.resume import Resume
@@ -14,9 +17,18 @@ from app.schemas.resume_vector import ResumeChunkMatch, ResumeSourceRecord
 from app.services.persistence_helpers import require_user
 from app.services.resume_knowledge_service import ResumeKnowledgeService
 from app.services.resume_parser_service import ResumeParserService
-from app.storage.resume_object_store import ResumeObjectStore
+from app.storage.resume_object_store import ResumeObjectMetadata, ResumeObjectStore
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ResumeIngestionPreparation:
+    """异步入库提交前的去重结果或 MinIO 暂存对象。"""
+
+    doc_hash: str
+    duplicate: ResumeRecord | None = None
+    stored_object: ResumeObjectMetadata | None = None
 
 
 class ResumeStorageService:
@@ -45,11 +57,16 @@ class ResumeStorageService:
     ) -> ResumeRecord:
         """先确认用户，再解析并保存 Resume。"""
         await require_user(self._user_repository, user_id)
-        parsed_document = await self._parser_service.parse_with_source(pdf_content)
-        parsed_resume = parsed_document.resume
         doc_hash = hashlib.sha256(pdf_content).hexdigest()
+        duplicate = await self._resume_repository.get_by_hash(
+            user_id=user_id,
+            doc_hash=doc_hash,
+        )
+        if duplicate is not None:
+            return self._to_record(duplicate)
+
+        parsed_document = await self._parser_service.parse_with_source(pdf_content)
         stored_object = None
-        record = None
         try:
             stored_object = await self._object_store.save(
                 user_id=user_id,
@@ -58,6 +75,122 @@ class ResumeStorageService:
                 content_type="application/pdf",
                 doc_hash=doc_hash,
             )
+            return await self._persist_parsed_resume(
+                user_id=user_id,
+                filename=filename,
+                doc_hash=doc_hash,
+                stored_object=stored_object,
+                parsed_resume=parsed_document.resume,
+                cleaned_text=parsed_document.cleaned_text,
+            )
+        except Exception as exc:
+            if stored_object is not None:
+                with suppress(Exception):
+                    await self._object_store.delete(
+                        bucket=stored_object.bucket,
+                        object_key=stored_object.object_key,
+                    )
+            return await self._handle_storage_failure(
+                exc=exc,
+                user_id=user_id,
+                doc_hash=doc_hash,
+                record=None,
+            )
+
+    async def prepare_async_ingestion(
+        self,
+        *,
+        user_id: int,
+        filename: str,
+        pdf_content: bytes,
+    ) -> ResumeIngestionPreparation:
+        """去重后将 PDF 暂存到 MinIO；Celery 消息仅需携带对象元数据。"""
+        await require_user(self._user_repository, user_id)
+        doc_hash = hashlib.sha256(pdf_content).hexdigest()
+        duplicate = await self._resume_repository.get_by_hash(
+            user_id=user_id,
+            doc_hash=doc_hash,
+        )
+        if duplicate is not None:
+            return ResumeIngestionPreparation(
+                doc_hash=doc_hash,
+                duplicate=self._to_record(duplicate),
+            )
+        stored_object = await self._object_store.save(
+            user_id=user_id,
+            filename=filename,
+            content=pdf_content,
+            content_type="application/pdf",
+            doc_hash=doc_hash,
+        )
+        return ResumeIngestionPreparation(
+            doc_hash=doc_hash,
+            stored_object=stored_object,
+        )
+
+    async def parse_staged_and_save(
+        self,
+        *,
+        user_id: int,
+        filename: str,
+        pdf_content: bytes,
+        doc_hash: str,
+        stored_object: ResumeObjectMetadata,
+    ) -> ResumeRecord:
+        """Celery Worker 复用已暂存对象，完成解析、MySQL 写入和 Milvus 索引。"""
+        await require_user(self._user_repository, user_id)
+        if hashlib.sha256(pdf_content).hexdigest() != doc_hash:
+            await self.discard_staged(stored_object)
+            raise AppException("Resume content checksum mismatch", code=40014, status_code=400)
+
+        duplicate = await self._resume_repository.get_by_hash(
+            user_id=user_id,
+            doc_hash=doc_hash,
+        )
+        if duplicate is not None:
+            await self.discard_staged(stored_object)
+            return self._to_record(duplicate)
+
+        try:
+            parsed_document = await self._parser_service.parse_with_source(pdf_content)
+            return await self._persist_parsed_resume(
+                user_id=user_id,
+                filename=filename,
+                doc_hash=doc_hash,
+                stored_object=stored_object,
+                parsed_resume=parsed_document.resume,
+                cleaned_text=parsed_document.cleaned_text,
+            )
+        except Exception as exc:
+            with suppress(Exception):
+                await self.discard_staged(stored_object)
+            return await self._handle_storage_failure(
+                exc=exc,
+                user_id=user_id,
+                doc_hash=doc_hash,
+                record=None,
+            )
+
+    async def discard_staged(self, stored_object: ResumeObjectMetadata) -> None:
+        """任务发布失败或重复命中时删除尚未成为正式简历的 MinIO 对象。"""
+        await self._object_store.delete(
+            bucket=stored_object.bucket,
+            object_key=stored_object.object_key,
+        )
+
+    async def _persist_parsed_resume(
+        self,
+        *,
+        user_id: int,
+        filename: str,
+        doc_hash: str,
+        stored_object: ResumeObjectMetadata,
+        parsed_resume: ResumeParseResult,
+        cleaned_text: str,
+    ) -> ResumeRecord:
+        """把同一份解析结果依次写入 MySQL 和 Milvus。"""
+        record = None
+        try:
             record = await self._resume_repository.create(
                 user_id=user_id,
                 filename=filename,
@@ -74,28 +207,47 @@ class ResumeStorageService:
                 resume_id=record.id,
                 user_id=user_id,
                 doc_hash=doc_hash,
-                content=parsed_document.cleaned_text,
+                content=cleaned_text,
             )
         except Exception as exc:
             if record is not None:
                 with suppress(Exception):
                     await self._resume_repository.delete(record.id, user_id=user_id)
-            if stored_object is not None:
-                with suppress(Exception):
-                    await self._object_store.delete(
-                        bucket=stored_object.bucket,
-                        object_key=stored_object.object_key,
-                    )
-            logger.exception(
-                "简历跨存储写入失败 resume_id=%s",
-                record.id if record is not None else None,
+            with suppress(Exception):
+                await self.discard_staged(stored_object)
+            return await self._handle_storage_failure(
+                exc=exc,
+                user_id=user_id,
+                doc_hash=doc_hash,
+                record=record,
             )
-            raise AppException(
-                "Resume storage is unavailable",
-                code=50320,
-                status_code=503,
-            ) from exc
         return self._to_record(record)
+
+    async def _handle_storage_failure(
+        self,
+        *,
+        exc: Exception,
+        user_id: int,
+        doc_hash: str,
+        record: Resume | None,
+    ) -> ResumeRecord:
+        """处理并发去重竞争，其他异常统一转为稳定的服务错误。"""
+        if isinstance(exc, IntegrityError):
+            duplicate = await self._resume_repository.get_by_hash(
+                user_id=user_id,
+                doc_hash=doc_hash,
+            )
+            if duplicate is not None:
+                return self._to_record(duplicate)
+        logger.exception(
+            "简历跨存储写入失败 resume_id=%s",
+            record.id if record is not None else None,
+        )
+        raise AppException(
+            "Resume storage is unavailable",
+            code=50320,
+            status_code=503,
+        ) from exc
 
     async def search_context(
         self,

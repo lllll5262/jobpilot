@@ -14,6 +14,7 @@ class Resume(CreatedAtMixin, Base):
     __tablename__ = "resumes"
     __table_args__ = (
         Index("ix_resumes_user_created", "user_id", "created_at"),
+        Index("uq_resumes_user_doc_hash", "user_id", "doc_hash", unique=True),
         Index(
             "uq_resumes_storage_object",
             "storage_bucket",

@@ -124,6 +124,18 @@ class MinioResumeObjectStore:
             expires=timedelta(seconds=self._presigned_url_ttl_seconds),
         )
 
+    async def read(self, *, bucket: str, object_key: str) -> bytes:
+        """读取 Celery 入库任务暂存在 MinIO 的 PDF，并及时归还 HTTP 连接。"""
+        return await asyncio.to_thread(self._read_sync, bucket, object_key)
+
+    def _read_sync(self, bucket: str, object_key: str) -> bytes:
+        response = self._get_client().get_object(bucket, object_key)
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()
+
     async def delete(self, *, bucket: str, object_key: str) -> None:
         """删除跨存储失败时遗留的对象。"""
         await asyncio.to_thread(self._get_client().remove_object, bucket, object_key)

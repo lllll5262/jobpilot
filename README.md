@@ -21,6 +21,7 @@ uvicorn app.main:app --reload
 - 健康检查：`http://127.0.0.1:8000/health`
 - JD 解析：`POST http://127.0.0.1:8000/jobs/parse`
 - 简历上传：`POST http://127.0.0.1:8000/users/{user_id}/resumes/parse`
+- 简历异步上传：`POST http://127.0.0.1:8000/users/{user_id}/resumes/parse-async`
 - 能力画像：`POST http://127.0.0.1:8000/profiles/build`
 - 岗位匹配：`POST http://127.0.0.1:8000/matches/evaluate`
 - 持久化工作流：见下方“数据库持久化”
@@ -77,11 +78,32 @@ curl.exe -X POST "http://127.0.0.1:8000/users/1/resumes/parse" `
 持久化上传接口 `POST /users/{user_id}/resumes/parse` 还会执行以下流程：
 
 ```text
-PDF ───────────────────────────────────────────────→ MinIO 私有对象
- ├→ 文件哈希、大小、Content-Type、s3:// 地址 ─────→ MySQL
- └→ 清洗正文 → 父块 1000 字符 → 子块 400 字符
+PDF → SHA-256 → MySQL 按 (user_id, doc_hash) 去重
+ ├→ 已存在：直接返回已有 Resume，不重复解析和向量化
+ └→ 新文件 ───────────────────────────────────────→ MinIO 私有对象
+      ├→ 文件哈希、大小、Content-Type、s3:// 地址 ─→ MySQL
+      └→ 清洗正文 → 父块 1000 字符 → 子块 400 字符
                                       └→ BGE-M3 稠密/稀疏向量 → Milvus
 ```
+
+生产入库可使用 `POST /users/{user_id}/resumes/parse-async`。接口完成文件校验、
+SHA-256 预去重和 MinIO 暂存后立即返回任务 ID；Celery 消息只包含用户 ID、哈希和
+MinIO 对象元数据，不包含 PDF 二进制。Worker 再执行 PDF 解析、MySQL 唯一约束去重、
+分块、批量 Embedding 和 Milvus 写入。查询任务状态：
+
+```text
+GET /users/{user_id}/resumes/ingestions/{task_id}
+```
+
+启动 Worker（BGE-M3 模型占用内存较大，建议每个 Worker 进程并发为 1）：
+
+```powershell
+celery -A app.tasks.celery_app:celery_app worker --loglevel=INFO --concurrency=1
+```
+
+`JOBPILOT_CELERY_BROKER_URL` 与 `JOBPILOT_CELERY_RESULT_BACKEND` 必须指向 API 和
+Worker 都能访问的服务。示例默认使用 Redis 的独立 DB；也可把 Broker 改为 RabbitMQ，
+结果后端仍建议使用 Redis，便于 HTTP 状态接口跨进程查询结果。
 
 Milvus 使用稠密向量和稀疏向量双路召回，并通过 `WeightedRanker(0.7, 0.3)`
 融合排序，不依赖 Elasticsearch。`POST /users/{user_id}/resumes/search` 用于检索相关
@@ -89,6 +111,13 @@ Milvus 使用稠密向量和稀疏向量双路召回，并通过 `WeightedRanker
 `GET /users/{user_id}/resumes/{resume_id}/source` 从 MySQL 读取对象元数据，并为
 MinIO 私有对象生成短时下载 URL。MySQL 中的 Resume ID 继续作为 Profile 和 Interview
 的外键。
+
+Milvus 新环境会创建版本化物理 Collection（默认 `jobpilot_resume_chunks_v1`），应用
+始终通过 Alias（默认 `jobpilot_resume_chunks_current`）读写。旧环境若已存在
+`jobpilot_resume_chunks`，首次启动只会把 Alias 指向旧 Collection，不迁移、不删除数据；
+因此现有 `resume_id=6` 的向量仍可检索。后续升级应先离线构建并校验新的物理
+Collection，再使用 Milvus `alter_alias` 原子切换；应用启动不会自动把 Alias 切到空版本。
+单次 Embedding 和 insert 的块数由 `JOBPILOT_RESUME_EMBEDDING_BATCH_SIZE` 控制。
 
 ## 候选人能力画像
 
@@ -138,6 +167,8 @@ PDF 对象，需重新上传后才能获得下载地址。
 
 - `POST /users`：创建用户
 - `POST /users/{user_id}/resumes/parse`：解析并保存 Resume
+- `POST /users/{user_id}/resumes/parse-async`：暂存 PDF 并提交 Celery 入库任务
+- `GET /users/{user_id}/resumes/ingestions/{task_id}`：查询异步入库状态和结果
 - `POST /users/{user_id}/resumes/search`：Milvus 稠密/稀疏混合检索
 - `GET /users/{user_id}/resumes/{resume_id}/source`：返回 MinIO 元数据和短时下载地址
 - `POST /users/{user_id}/profiles/build`：构建并保存当前 Profile

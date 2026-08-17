@@ -22,9 +22,12 @@ def get_milvus_resume_store() -> MilvusResumeVectorStore:
         token=token or None,
         database=settings.milvus_database,
         collection=settings.milvus_resume_collection,
+        collection_version=settings.milvus_resume_collection_version,
+        alias=settings.milvus_resume_alias,
         model_path=settings.resume_embedding_model_path,
         device=settings.resume_embedding_device,
         use_fp16=settings.resume_embedding_use_fp16,
+        embedding_batch_size=settings.resume_embedding_batch_size,
     )
 
 
