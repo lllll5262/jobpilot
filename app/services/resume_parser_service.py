@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class ParsedResumeDocument:
-    """同时返回结构化简历和清洗后的完整原文，供 MongoDB/Milvus 存储。"""
+    """同时返回结构化简历和清洗后的完整原文，供 MySQL/Milvus 使用。"""
 
     resume: ResumeParseResult
     cleaned_text: str

@@ -37,12 +37,26 @@ class ResumeRepository:
         *,
         user_id: int,
         filename: str,
+        doc_hash: str,
+        file_size_bytes: int,
+        content_type: str,
+        storage_bucket: str,
+        storage_object_key: str,
+        storage_uri: str,
+        object_etag: str | None,
         parsed_data: dict[str, Any],
     ) -> Resume:
-        """保存结构化 Resume。"""
+        """保存 MinIO 地址、文件校验信息和结构化 Resume。"""
         resume = Resume(
             user_id=user_id,
             filename=filename,
+            doc_hash=doc_hash,
+            file_size_bytes=file_size_bytes,
+            content_type=content_type,
+            storage_bucket=storage_bucket,
+            storage_object_key=storage_object_key,
+            storage_uri=storage_uri,
+            object_etag=object_etag,
             parsed_data=parsed_data,
         )
         self._session.add(resume)

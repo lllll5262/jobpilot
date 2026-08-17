@@ -17,17 +17,25 @@ CREATE TABLE `users` (
   CONSTRAINT `uq_users_email` UNIQUE (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 简历：保存文件信息和 LLM 解析后的 Resume JSON。
+-- 简历：保存 MinIO 对象元数据和 LLM 解析后的 Resume JSON。
 CREATE TABLE `resumes` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `user_id` BIGINT NOT NULL,
   `filename` VARCHAR(255) NOT NULL,
+  `doc_hash` CHAR(64) NOT NULL,
+  `file_size_bytes` BIGINT NOT NULL,
+  `content_type` VARCHAR(100) NOT NULL DEFAULT 'application/pdf',
+  `storage_bucket` VARCHAR(63) NOT NULL,
+  `storage_object_key` VARCHAR(512) NOT NULL,
+  `storage_uri` VARCHAR(1024) NOT NULL,
+  `object_etag` VARCHAR(128) NULL,
   `parsed_data` JSON NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT `pk_resumes` PRIMARY KEY (`id`),
   CONSTRAINT `fk_resumes_user_id_users`
     FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  INDEX `ix_resumes_user_created` (`user_id`, `created_at`)
+  INDEX `ix_resumes_user_created` (`user_id`, `created_at`),
+  UNIQUE INDEX `uq_resumes_storage_object` (`storage_bucket`, `storage_object_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 候选人画像：与原始简历分开保存，is_current 标识用户当前画像。

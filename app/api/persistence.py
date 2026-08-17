@@ -47,6 +47,8 @@ from app.services.resume_parser_service import ResumeParserService
 from app.services.resume_rag_service import ResumeRagService
 from app.services.resume_storage_service import ResumeStorageService
 from app.services.user_service import UserService
+from app.storage.dependencies import get_resume_object_store
+from app.storage.minio_resume_store import MinioResumeObjectStore
 from app.vectorstore.dependencies import get_resume_knowledge_service
 
 router = APIRouter(tags=["Persistence"])
@@ -68,6 +70,10 @@ def get_resume_storage_service(
         ResumeKnowledgeService,
         Depends(get_resume_knowledge_service),
     ],
+    object_store: Annotated[
+        MinioResumeObjectStore,
+        Depends(get_resume_object_store),
+    ],
 ) -> ResumeStorageService:
     """组装 Resume 持久化 Service。"""
     return ResumeStorageService(
@@ -75,6 +81,7 @@ def get_resume_storage_service(
         ResumeRepository(session),
         UserRepository(session),
         knowledge_service,
+        object_store,
     )
 
 
@@ -209,7 +216,7 @@ async def get_resume_source(
     resume_id: Annotated[int, Path(gt=0)],
     service: Annotated[ResumeStorageService, Depends(get_resume_storage_service)],
 ) -> ApiResponse[ResumeSourceRecord]:
-    """读取 MongoDB 中保存的完整简历，以便核对向量检索片段的来源。"""
+    """返回 MinIO 原始简历的元数据和短时下载地址。"""
     return ApiResponse(data=await service.get_source(user_id=user_id, resume_id=resume_id))
 
 

@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。MySQL 保存业务关系，Milvus 保存可检索的简历父子块向量；当前上传链路不启用 MongoDB。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。MySQL 保存业务关系和简历对象元数据，MinIO 保存原始 PDF，Milvus 保存可检索的简历父子块向量。
 
 ## 环境要求
 
@@ -77,15 +77,18 @@ curl.exe -X POST "http://127.0.0.1:8000/users/1/resumes/parse" `
 持久化上传接口 `POST /users/{user_id}/resumes/parse` 还会执行以下流程：
 
 ```text
-PDF → 清洗后完整正文 → 父块 1000 字符 → 子块 400 字符
-                                          └→ BGE-M3 稠密/稀疏向量 → Milvus
+PDF ───────────────────────────────────────────────→ MinIO 私有对象
+ ├→ 文件哈希、大小、Content-Type、s3:// 地址 ─────→ MySQL
+ └→ 清洗正文 → 父块 1000 字符 → 子块 400 字符
+                                      └→ BGE-M3 稠密/稀疏向量 → Milvus
 ```
 
 Milvus 使用稠密向量和稀疏向量双路召回，并通过 `WeightedRanker(0.7, 0.3)`
 融合排序，不依赖 Elasticsearch。`POST /users/{user_id}/resumes/search` 用于检索相关
 子块并返回对应父块。Milvus 实体自身保存 `parent_content`，用于生成上下文和来源核验；
-完整原文接口在未配置文档存储时返回未找到。MySQL 中的 Resume ID 继续作为 Profile 和
-Interview 的外键。
+`GET /users/{user_id}/resumes/{resume_id}/source` 从 MySQL 读取对象元数据，并为
+MinIO 私有对象生成短时下载 URL。MySQL 中的 Resume ID 继续作为 Profile 和 Interview
+的外键。
 
 ## 候选人能力画像
 
@@ -120,20 +123,23 @@ Resume 保存候选人做过的教育、项目和实习经历；Candidate Profil
 
 ## 数据库持久化
 
-复制 `.env.example` 后配置 `JOBPILOT_DATABASE_URL`，并将初始化脚本导入 MySQL：
+复制 `.env.example` 后配置 `JOBPILOT_DATABASE_URL`、`JOBPILOT_MINIO_*` 和
+`JOBPILOT_MILVUS_*`。新数据库可直接导入初始化脚本：
 
 ```powershell
 Get-Content "database/jobpilot_schema.sql" -Raw | mysql -h <mysql-host> -P <mysql-port> -u <mysql-user> -p
 ```
 
-表初始化完成后，应用通过 SQLAlchemy 和 aiomysql 直接执行日常增删改查，不需要运行数据库迁移命令。
+已有 `resumes` 表需要先备份数据库，再执行
+`database/migrate_resume_minio_metadata.sql` 增加对象元数据列。旧简历没有对应的原始
+PDF 对象，需重新上传后才能获得下载地址。
 
 持久化接口：
 
 - `POST /users`：创建用户
 - `POST /users/{user_id}/resumes/parse`：解析并保存 Resume
 - `POST /users/{user_id}/resumes/search`：Milvus 稠密/稀疏混合检索
-- `GET /users/{user_id}/resumes/{resume_id}/source`：文档存储未启用时返回未找到
+- `GET /users/{user_id}/resumes/{resume_id}/source`：返回 MinIO 元数据和短时下载地址
 - `POST /users/{user_id}/profiles/build`：构建并保存当前 Profile
 - `GET /users/{user_id}/profile`：查看当前 Profile
 - `POST /users/{user_id}/jobs/parse`：解析并保存 JD
@@ -349,6 +355,7 @@ app/
 ├── rules/          # 确定性的技能、学历和算分规则
 ├── schemas/        # Pydantic 数据模型
 ├── services/       # 应用服务
+├── storage/        # MinIO 原始简历对象存储
 ├── tools/          # Agent Tool 适配层，不承载业务逻辑
 └── main.py         # 应用入口
 tests/              # 自动化测试

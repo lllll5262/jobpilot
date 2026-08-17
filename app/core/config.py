@@ -41,10 +41,14 @@ class Settings(BaseSettings):
     conversation_max_turns: int = Field(default=10, ge=1, le=50)
     agent_cache_ttl_seconds: int = Field(default=3_600, ge=60, le=86_400)
     checkpoint_ttl_seconds: int = Field(default=86_400, ge=300, le=2_592_000)
-    # MongoDB 保存完整简历正文与结构化结果，作为可追溯的简历文档源。
-    mongo_url: SecretStr = SecretStr("mongodb://127.0.0.1:27017")
-    mongo_database: str = "jobpilot"
-    mongo_resume_collection: str = "resumes"
+    # MinIO 保存原始 PDF；MySQL 只保存对象地址、校验值和业务结构化数据。
+    minio_endpoint: str = "127.0.0.1:9000"
+    minio_access_key: SecretStr = SecretStr("")
+    minio_secret_key: SecretStr = SecretStr("")
+    minio_secure: bool = False
+    minio_region: str | None = None
+    minio_resume_bucket: str = "jobpilot-resumes"
+    minio_presigned_url_ttl_seconds: int = Field(default=900, ge=60, le=604_800)
     # Milvus 只保存父子分块及 BGE-M3 稠密/稀疏向量，不保存原始 PDF 二进制。
     milvus_uri: str = "http://127.0.0.1:19530"
     milvus_token: SecretStr | None = None

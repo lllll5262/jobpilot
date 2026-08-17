@@ -30,7 +30,7 @@ def get_milvus_resume_store() -> MilvusResumeVectorStore:
 
 @lru_cache
 def get_resume_knowledge_service() -> ResumeKnowledgeService:
-    """组装父子分块和 Milvus 双向量存储，不启用 MongoDB 原文存储。"""
+    """组装父子分块和 Milvus 双向量存储。"""
     settings = get_settings()
     return ResumeKnowledgeService(
         chunking_service=ResumeChunkingService(
@@ -38,7 +38,6 @@ def get_resume_knowledge_service() -> ResumeKnowledgeService:
             child_chunk_size=settings.resume_child_chunk_size,
             chunk_overlap=settings.resume_chunk_overlap,
         ),
-        document_store=None,
         vector_store=get_milvus_resume_store(),
     )
 

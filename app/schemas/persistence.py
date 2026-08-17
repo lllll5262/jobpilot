@@ -42,11 +42,15 @@ class UserRecord(BaseModel):
 
 
 class ResumeRecord(BaseModel):
-    """已保存的结构化 Resume。"""
+    """已保存的结构化 Resume 与原始文件对象元数据。"""
 
     id: int
     user_id: int
     filename: str
+    doc_hash: str | None = None
+    file_size_bytes: int | None = None
+    content_type: str | None = None
+    storage_uri: str | None = None
     resume: ResumeParseResult
     created_at: datetime
 

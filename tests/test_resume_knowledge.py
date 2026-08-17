@@ -8,27 +8,6 @@ from app.services.resume_chunking_service import ResumeChunk, ResumeChunkingServ
 from app.services.resume_knowledge_service import ResumeKnowledgeService
 
 
-class FakeDocumentStore:
-    """记录完整简历写入。"""
-
-    def __init__(self) -> None:
-        self.document: dict[str, Any] | None = None
-        self.deleted = False
-
-    async def save(self, **values: Any) -> None:
-        self.document = values
-
-    async def get(self, *, resume_id: int, user_id: int) -> dict[str, Any] | None:
-        if self.document and self.document["resume_id"] == resume_id:
-            assert self.document["user_id"] == user_id
-            return self.document
-        return None
-
-    async def delete(self, *, resume_id: int, user_id: int) -> None:
-        del resume_id, user_id
-        self.deleted = True
-
-
 class FakeVectorStore:
     """记录 Milvus 应收到的父子块。"""
 
@@ -76,11 +55,10 @@ def test_parent_child_chunks_keep_traceable_parent_content() -> None:
     assert len(chunks[0].parent_content) >= len(chunks[0].text)
 
 
-def test_knowledge_service_saves_source_and_indexes_chunks() -> None:
-    """完整正文进入文档库，只有父子块进入向量库。"""
+def test_knowledge_service_indexes_parent_child_chunks() -> None:
+    """清洗正文只用于生成可检索的 Milvus 父子块。"""
 
     async def run() -> None:
-        document_store = FakeDocumentStore()
         vector_store = FakeVectorStore()
         service = ResumeKnowledgeService(
             chunking_service=ResumeChunkingService(
@@ -88,7 +66,6 @@ def test_knowledge_service_saves_source_and_indexes_chunks() -> None:
                 child_chunk_size=20,
                 chunk_overlap=5,
             ),
-            document_store=document_store,
             vector_store=vector_store,
         )
         content = "技能：Java、Redis。\n项目：使用 Redis 和 Lua 实现秒杀库存扣减。"
@@ -96,10 +73,8 @@ def test_knowledge_service_saves_source_and_indexes_chunks() -> None:
         await service.save(
             resume_id=10,
             user_id=1,
-            filename="resume.pdf",
             doc_hash="a" * 64,
             content=content,
-            structured_data={"skills": ["Java", "Redis"]},
         )
         matches = await service.search(
             user_id=1,
@@ -108,39 +83,43 @@ def test_knowledge_service_saves_source_and_indexes_chunks() -> None:
             limit=5,
         )
 
-        assert document_store.document is not None
-        assert document_store.document["content"] == content
         assert vector_store.chunks
         assert matches[0].parent_content
 
     asyncio.run(run())
 
 
-def test_knowledge_service_can_index_without_document_store() -> None:
-    """关闭 MongoDB 后仍应完成父子分块和向量索引。"""
+def test_knowledge_service_cleans_vectors_when_indexing_fails() -> None:
+    """Milvus 索引失败时应执行补偿删除。"""
 
     async def run() -> None:
-        vector_store = FakeVectorStore()
+        class FailingVectorStore(FakeVectorStore):
+            async def index(self, *, chunks: list[ResumeChunk], **_: Any) -> None:
+                self.chunks = chunks
+                raise RuntimeError("index failed")
+
+        vector_store = FailingVectorStore()
         service = ResumeKnowledgeService(
             chunking_service=ResumeChunkingService(
                 parent_chunk_size=40,
                 child_chunk_size=20,
                 chunk_overlap=5,
             ),
-            document_store=None,
             vector_store=vector_store,
         )
 
-        await service.save(
-            resume_id=10,
-            user_id=1,
-            filename="resume.pdf",
-            doc_hash="a" * 64,
-            content="技能：Java、Redis。项目：使用 Redis 和 Lua 实现库存扣减。",
-            structured_data={"skills": ["Java", "Redis"]},
-        )
+        try:
+            await service.save(
+                resume_id=10,
+                user_id=1,
+                doc_hash="a" * 64,
+                content="技能：Java、Redis。项目：使用 Redis 和 Lua 实现库存扣减。",
+            )
+        except RuntimeError as exc:
+            assert str(exc) == "index failed"
+        else:
+            raise AssertionError("expected index failure")
 
-        assert vector_store.chunks
-        assert await service.get_source(resume_id=10, user_id=1) is None
+        assert vector_store.chunks == []
 
     asyncio.run(run())

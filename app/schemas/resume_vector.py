@@ -39,11 +39,14 @@ class ResumeSearchResult(ResumeVectorModel):
 
 
 class ResumeSourceRecord(ResumeVectorModel):
-    """MongoDB 中用于来源核验的完整简历记录。"""
+    """MinIO 原始文件的元数据、短时下载地址和结构化结果。"""
 
     resume_id: int
     user_id: int
     filename: str
     doc_hash: str
-    content: str
+    file_size_bytes: int
+    content_type: str
+    storage_uri: str
+    download_url: str
     resume: ResumeParseResult

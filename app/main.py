@@ -22,6 +22,7 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.database import dispose_database
 from app.memory.connection import dispose_redis
+from app.storage.dependencies import dispose_resume_object_store
 from app.vectorstore.dependencies import dispose_resume_knowledge_stores
 
 settings = get_settings()
@@ -42,6 +43,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     finally:
         await dispose_database()
         await dispose_redis()
+        await dispose_resume_object_store()
         await dispose_resume_knowledge_stores()
         logger.info("应用停止 name=%s", settings.app_name)
 

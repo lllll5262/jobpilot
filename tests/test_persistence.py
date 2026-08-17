@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import app.models  # noqa: F401  # 注册所有表到 Metadata。
+from app.core.exceptions import AppException
 from app.db.base import Base
 from app.main import app
 from app.schemas.job import JDParseResult
@@ -19,6 +20,7 @@ from app.services.profile_storage_service import ProfileStorageService
 from app.services.resume_parser_service import ParsedResumeDocument
 from app.services.resume_storage_service import ResumeStorageService
 from app.services.user_service import UserService
+from app.storage.resume_object_store import ResumeObjectMetadata
 
 CREATED_AT = datetime(2026, 8, 12, tzinfo=UTC)
 
@@ -92,12 +94,26 @@ class FakeResumeRepository:
         *,
         user_id: int,
         filename: str,
+        doc_hash: str,
+        file_size_bytes: int,
+        content_type: str,
+        storage_bucket: str,
+        storage_object_key: str,
+        storage_uri: str,
+        object_etag: str | None,
         parsed_data: dict[str, Any],
     ) -> Any:
         self.record = SimpleNamespace(
             id=10,
             user_id=user_id,
             filename=filename,
+            doc_hash=doc_hash,
+            file_size_bytes=file_size_bytes,
+            content_type=content_type,
+            storage_bucket=storage_bucket,
+            storage_object_key=storage_object_key,
+            storage_uri=storage_uri,
+            object_etag=object_etag,
             parsed_data=parsed_data,
             created_at=CREATED_AT,
         )
@@ -196,7 +212,7 @@ class StubResumeParserService:
     """固定返回结构化 Resume。"""
 
     async def parse_with_source(self, pdf_content: bytes) -> ParsedResumeDocument:
-        """持久化流程还需要完整文本用于 MongoDB 和 Milvus。"""
+        """持久化流程还需要清洗文本用于 Milvus。"""
         assert pdf_content.startswith(b"%PDF-")
         return ParsedResumeDocument(
             resume=ResumeParseResult.model_validate(RESUME_DATA),
@@ -205,13 +221,40 @@ class StubResumeParserService:
 
 
 class FakeResumeKnowledgeService:
-    """避免持久化闭环测试连接真实 MongoDB 和 Milvus。"""
+    """避免持久化闭环测试连接真实 Milvus。"""
 
     def __init__(self) -> None:
         self.saved_resume_id: int | None = None
 
     async def save(self, **values: Any) -> None:
         self.saved_resume_id = values["resume_id"]
+
+
+class FakeResumeObjectStore:
+    """避免持久化闭环测试连接真实 MinIO。"""
+
+    def __init__(self) -> None:
+        self.deleted = False
+
+    async def save(self, **values: Any) -> ResumeObjectMetadata:
+        return ResumeObjectMetadata(
+            bucket="jobpilot-resumes",
+            object_key="users/1/resumes/test.pdf",
+            storage_uri="s3://jobpilot-resumes/users/1/resumes/test.pdf",
+            etag="test-etag",
+            size_bytes=len(values["content"]),
+            content_type=values["content_type"],
+        )
+
+    async def create_download_url(self, *, bucket: str, object_key: str) -> str:
+        return f"https://minio.example/{bucket}/{object_key}"
+
+    async def delete(self, *, bucket: str, object_key: str) -> None:
+        del bucket, object_key
+        self.deleted = True
+
+    def close(self) -> None:
+        pass
 
 
 
@@ -256,6 +299,15 @@ def test_metadata_contains_stage5_tables() -> None:
         "jobs",
         "job_analyses",
     }.issubset(Base.metadata.tables)
+    assert {
+        "doc_hash",
+        "file_size_bytes",
+        "content_type",
+        "storage_bucket",
+        "storage_object_key",
+        "storage_uri",
+        "object_etag",
+    }.issubset(Base.metadata.tables["resumes"].columns.keys())
 
 
 def test_persistence_routes_are_registered() -> None:
@@ -289,11 +341,13 @@ def test_persistence_services_complete_closed_loop() -> None:
         )
         assert user.email == "user@example.com"
 
+        object_store = FakeResumeObjectStore()
         resume_service = ResumeStorageService(
             StubResumeParserService(),
             resume_repository,
             user_repository,
             FakeResumeKnowledgeService(),  # type: ignore[arg-type]
+            object_store,
         )
         resume = await resume_service.parse_and_save(
             user_id=user.id,
@@ -301,6 +355,10 @@ def test_persistence_services_complete_closed_loop() -> None:
             pdf_content=b"%PDF-test",
         )
         assert resume.resume.skills == ["Java"]
+        assert resume.storage_uri == "s3://jobpilot-resumes/users/1/resumes/test.pdf"
+        source = await resume_service.get_source(user_id=user.id, resume_id=resume.id)
+        assert source.storage_uri == resume.storage_uri
+        assert source.download_url.startswith("https://minio.example/")
 
         profile_service = ProfileStorageService(
             StubProfileBuilderService(),
@@ -343,3 +401,42 @@ def test_persistence_services_complete_closed_loop() -> None:
         assert history[0].id == analysis.id
 
     asyncio.run(run_workflow())
+
+
+def test_resume_storage_rolls_back_mysql_and_minio_when_milvus_fails() -> None:
+    """Milvus 失败不能遗留 MySQL 记录或孤立 MinIO 对象。"""
+
+    class FailingKnowledgeService:
+        async def save(self, **_: Any) -> None:
+            raise RuntimeError("milvus unavailable")
+
+    async def run() -> None:
+        user_repository = FakeUserRepository()
+        await UserService(user_repository).create(
+            UserCreateRequest(email="rollback@example.com", name="回滚测试")
+        )
+        resume_repository = FakeResumeRepository()
+        object_store = FakeResumeObjectStore()
+        service = ResumeStorageService(
+            StubResumeParserService(),
+            resume_repository,
+            user_repository,
+            FailingKnowledgeService(),  # type: ignore[arg-type]
+            object_store,
+        )
+
+        try:
+            await service.parse_and_save(
+                user_id=1,
+                filename="resume.pdf",
+                pdf_content=b"%PDF-test",
+            )
+        except AppException as exc:
+            assert exc.code == 50320
+        else:
+            raise AssertionError("expected storage failure")
+
+        assert resume_repository.record is None
+        assert object_store.deleted is True
+
+    asyncio.run(run())
