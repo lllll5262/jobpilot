@@ -27,6 +27,7 @@ from app.services.interview_service import InterviewService
 from app.services.job_storage_service import JobStorageService
 from app.services.profile_storage_service import ProfileStorageService
 from app.services.resume_optimization_service import ResumeOptimizationService
+from app.services.resume_rag_service import ResumeRagService
 from app.services.resume_storage_service import ResumeStorageService
 
 router = APIRouter(prefix="/users/{user_id}/supervisor", tags=["Supervisor Agent"])
@@ -39,8 +40,9 @@ def get_resume_agent(
     resume_service: Annotated[ResumeStorageService, Depends(get_resume_storage_service)],
     profile_service: Annotated[ProfileStorageService, Depends(get_profile_storage_service)],
     job_service: Annotated[JobStorageService, Depends(get_job_storage_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> ResumeAgent:
-    """组装 Resume Agent 及其四个 Tool 所需 Service。"""
+    """组装 Resume Agent 及其领域 Tool 所需 Service。"""
     optimization_service = ResumeOptimizationService(
         llm_client=model,
         resume_service=resume_service,
@@ -50,8 +52,13 @@ def get_resume_agent(
     return ResumeAgent(
         user_id=user_id,
         resume_service=resume_service,
+        rag_service=ResumeRagService(
+            llm_client=model,
+            resume_service=resume_service,
+        ),
         profile_service=profile_service,
         optimization_service=optimization_service,
+        retrieval_limit=settings.resume_retrieval_limit,
     )
 
 

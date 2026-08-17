@@ -37,6 +37,9 @@ def test_frontend_assets_are_served() -> None:
     assert 'id="optimization-modal"' in html.text
     assert "/users/${state.context.userId}/supervisor" in script.text
     assert "/users/${state.context.userId}/resumes/parse" in script.text
+    assert "这份简历已经上传过了，无需重复上传" in script.text
+    assert "简历依据：" in script.text
+    assert "提问关于|问我关于|出题关于|考察我关于" in script.text
     assert "/users/${state.context.userId}/profiles/build" in script.text
     assert "/users/${state.context.userId}/jobs?limit=50&offset=0" in script.text
     assert 'action === "optimize_resume"' in script.text

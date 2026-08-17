@@ -95,6 +95,10 @@ MinIO 对象元数据，不包含 PDF 二进制。Worker 再执行 PDF 解析、
 GET /users/{user_id}/resumes/ingestions/{task_id}
 ```
 
+同步或异步提交命中重复文件时，响应会返回 `message="简历已上传过"`、
+`duplicate=true` 和已有 Resume。Web 前端会显示“这份简历已经上传过了”，并跳过
+Profile 重建、MinIO 重复保存和 Milvus 重复向量化。
+
 启动 Worker（BGE-M3 模型占用内存较大，建议每个 Worker 进程并发为 1）：
 
 ```powershell

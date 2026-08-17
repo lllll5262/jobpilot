@@ -12,6 +12,7 @@ class ResumeAgentAction(StrEnum):
     """Resume Agent 当前支持的动作。"""
 
     GET_RESUME = "get_resume"
+    ANSWER_RESUME = "answer_resume"
     GET_PROFILE = "get_profile"
     UPDATE_PROFILE = "update_profile"
     OPTIMIZE_RESUME = "optimize_resume"
@@ -24,6 +25,7 @@ class ResumeAgentPayload(BaseModel):
 
     resume_id: int | None = Field(default=None, gt=0)
     job_id: int | None = Field(default=None, gt=0)
+    query: str | None = Field(default=None, min_length=1, max_length=2_000)
 
 
 class ResumeOptimizationSuggestion(BaseModel):

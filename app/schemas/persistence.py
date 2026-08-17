@@ -48,6 +48,7 @@ class ResumeRecord(BaseModel):
     id: int
     user_id: int
     filename: str
+    duplicate: bool = False
     doc_hash: str | None = None
     file_size_bytes: int | None = None
     content_type: str | None = None
@@ -61,6 +62,7 @@ class ResumeIngestionSubmission(BaseModel):
 
     task_id: str | None = None
     status: Literal["queued", "completed"]
+    duplicate: bool = False
     resume: ResumeRecord | None = None
 
 

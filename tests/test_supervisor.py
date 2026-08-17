@@ -51,7 +51,7 @@ class StubResumeAgent:
         return ResumeAgentResult(
             action=action,
             result={"profile_id": 20},
-            tool_trace=["get_profile"],
+            tool_trace=[action.value],
         )
 
 
@@ -66,7 +66,7 @@ class StubInterviewAgent:
         return InterviewAgentResult(
             action=action.value,
             result={"interview_id": 50, "question_id": "q1"},
-            tool_trace=["create_interview_plan"],
+            tool_trace=[action.value],
         )
 
 
@@ -220,6 +220,51 @@ def test_supervisor_answers_identity_without_calling_domain_agent() -> None:
     assert "JobPilot" in result.result["message"]
     assert result.tool_trace == []
     assert resume_agent.payload is None
+
+
+def test_supervisor_routes_resume_fact_question_to_rag_answer() -> None:
+    """简历具体事实问题必须携带原问题进入 RAG，而不是返回整份简历摘要。"""
+    supervisor, resume_agent, _ = build_supervisor()
+    result = asyncio.run(
+        supervisor.handle(
+            SupervisorRequest(
+                session_id=SESSION_ID,
+                message="简历写的是那个学校",
+                payload={"resume_id": 10},
+            )
+        )
+    )
+
+    assert result.target_agent == "resume"
+    assert result.action == "answer_resume"
+    assert result.tool_trace == ["answer_resume"]
+    assert resume_agent.payload == {
+        "resume_id": 10,
+        "query": "简历写的是那个学校",
+    }
+
+
+def test_supervisor_treats_requested_interview_topic_as_command() -> None:
+    """即使前端残留 answer 字段，指定主题也不得作为上一题答案评分。"""
+    supervisor, _, interview_agent = build_supervisor()
+    result = asyncio.run(
+        supervisor.handle(
+            SupervisorRequest(
+                session_id=SESSION_ID,
+                message="我想让你提问关于redis的",
+                payload={
+                    "interview_id": 50,
+                    "question_id": "q1",
+                    "answer": "我想让你提问关于redis的",
+                },
+            )
+        )
+    )
+
+    assert result.target_agent == "interview"
+    assert result.action == "request_topic"
+    assert result.tool_trace == ["request_topic"]
+    assert interview_agent.payload == {"interview_id": 50, "topic": "redis"}
 
 
 def test_supervisor_detects_pasted_jd_without_explicit_instruction() -> None:

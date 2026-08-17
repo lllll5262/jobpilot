@@ -83,6 +83,33 @@ class StubProfileService:
         return await self.get_current(user_id)
 
 
+class StubResumeRagService:
+    """返回带来源的简历事实答案。"""
+
+    async def answer(
+        self,
+        *,
+        user_id: int,
+        query: str,
+        limit: int,
+        resume_id: int | None,
+    ) -> Any:
+        assert (user_id, query, limit, resume_id) == (1, "简历写的是哪个学校", 8, 10)
+        return type(
+            "ResumeAnswerStub",
+            (),
+            {
+                "model_dump": lambda self, mode: {
+                    "query": query,
+                    "answer": "测试大学。",
+                    "resume_id": 10,
+                    "cited_parent_ids": ["resume_10_parent_0"],
+                    "contexts": [],
+                }
+            },
+        )()
+
+
 class StubOptimizationService:
     """返回最小优化结果，验证 Agent 只负责 Tool 路由。"""
 
@@ -110,8 +137,10 @@ def build_resume_agent() -> ResumeAgent:
     return ResumeAgent(
         user_id=1,
         resume_service=StubResumeService(),  # type: ignore[arg-type]
+        rag_service=StubResumeRagService(),  # type: ignore[arg-type]
         profile_service=StubProfileService(),  # type: ignore[arg-type]
         optimization_service=StubOptimizationService(),  # type: ignore[arg-type]
+        retrieval_limit=8,
     )
 
 
@@ -123,6 +152,13 @@ def test_resume_agent_routes_profile_and_optimization_tools() -> None:
         profile = await agent.execute(action=ResumeAgentAction.GET_PROFILE, payload={})
         assert profile.tool_trace == ["get_profile"]
         assert profile.result["id"] == 20
+
+        answer = await agent.execute(
+            action=ResumeAgentAction.ANSWER_RESUME,
+            payload={"resume_id": 10, "query": "简历写的是哪个学校"},
+        )
+        assert answer.tool_trace == ["answer_resume"]
+        assert answer.result["answer"] == "测试大学。"
 
         optimization = await agent.execute(
             action=ResumeAgentAction.OPTIMIZE_RESUME,

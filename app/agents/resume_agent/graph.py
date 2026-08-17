@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agents.resume_agent.state import ResumeAgentState
 from app.schemas.resume_agent import ResumeAgentAction, ResumeAgentPayload
 from app.tools.resume_agent_tools import (
+    AnswerResumeTool,
     GetProfileTool,
     GetResumeTool,
     OptimizeResumeTool,
@@ -21,12 +22,14 @@ class ResumeAgentGraph:
         self,
         *,
         get_resume_tool: GetResumeTool,
+        answer_resume_tool: AnswerResumeTool,
         get_profile_tool: GetProfileTool,
         update_profile_tool: UpdateProfileTool,
         optimize_resume_tool: OptimizeResumeTool,
     ) -> None:
         self._tools = {
             ResumeAgentAction.GET_RESUME: get_resume_tool,
+            ResumeAgentAction.ANSWER_RESUME: answer_resume_tool,
             ResumeAgentAction.GET_PROFILE: get_profile_tool,
             ResumeAgentAction.UPDATE_PROFILE: update_profile_tool,
             ResumeAgentAction.OPTIMIZE_RESUME: optimize_resume_tool,

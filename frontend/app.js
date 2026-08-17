@@ -295,14 +295,15 @@ function buildPayload(message) {
     /(简历|画像|profile|优化)/i.test(lower) &&
     !/(面试|interview)/i.test(lower)
   ) payload.resume_id = state.context.resumeId;
-  const isInterviewCommand = /(薄弱|查看|开始|创建|生成题|当前题)/i.test(lower);
+  const isTopicCommand = /(提问关于|问我关于|出题关于|考察我关于)/i.test(lower);
+  const isInterviewCommand = isTopicCommand || /(薄弱|查看|开始|创建|生成题|当前题)/i.test(lower);
   const isActiveAnswer = Boolean(
     state.context.interviewId &&
     state.context.questionId &&
     !isInterviewCommand &&
     !/(简历|画像|profile|优化)/i.test(lower)
   );
-  if (state.context.interviewId && (isActiveAnswer || /(面试|问题|薄弱|追问)/i.test(lower))) {
+  if (state.context.interviewId && (isActiveAnswer || isTopicCommand || /(面试|问题|薄弱|追问)/i.test(lower))) {
     payload.interview_id = state.context.interviewId;
   }
   if (isActiveAnswer) {
@@ -360,6 +361,15 @@ async function uploadResume(file) {
     state.context.resumeId = resume.id;
     localStorage.setItem("jobpilot-context", JSON.stringify(state.context));
 
+    if (resume.duplicate) {
+      loadingCard.querySelector(".message-content").innerHTML = `
+        <p><strong>这份简历已经上传过了，无需重复上传。</strong></p>
+        <p>已使用现有简历 ID：${resume.id}，不会重复解析、保存或向量化。</p>`;
+      loadingCard.removeAttribute("data-loading");
+      setAgent("resume");
+      return;
+    }
+
     let profileMessage = "候选人画像尚未更新。";
     try {
       const profileResponse = await fetch(`/users/${state.context.userId}/profiles/build`, {
@@ -399,6 +409,10 @@ function humanizeResult(data) {
   const result = data.result || {};
   if (result.message) {
     return `<p>${escapeHtml(result.message).replace(/\n/g, "<br>")}</p>`;
+  }
+  if (result.answer && result.query) {
+    const sources = (result.cited_parent_ids || []).map((id) => escapeHtml(id)).join("、");
+    return `<p>${escapeHtml(result.answer).replace(/\n/g, "<br>")}</p>${sources ? `<p style="color:#7b8499">简历依据：${sources}</p>` : ""}`;
   }
   if (result.final_answer && result.analysis && result.job) {
     const match = result.analysis.result || {};

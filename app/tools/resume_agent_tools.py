@@ -6,6 +6,7 @@ from app.core.exceptions import AppException
 from app.schemas.resume_agent import ResumeAgentPayload
 from app.services.profile_storage_service import ProfileStorageService
 from app.services.resume_optimization_service import ResumeOptimizationService
+from app.services.resume_rag_service import ResumeRagService
 from app.services.resume_storage_service import ResumeStorageService
 
 
@@ -20,6 +21,34 @@ class GetResumeTool:
 
     async def invoke(self, payload: ResumeAgentPayload) -> dict[str, Any]:
         result = await self._service.get(user_id=self._user_id, resume_id=payload.resume_id)
+        return result.model_dump(mode="json")
+
+
+class AnswerResumeTool:
+    """通过 Milvus 检索和受来源约束的生成链路回答简历事实问题。"""
+
+    name = "answer_resume"
+
+    def __init__(
+        self,
+        *,
+        user_id: int,
+        service: ResumeRagService,
+        retrieval_limit: int,
+    ) -> None:
+        self._user_id = user_id
+        self._service = service
+        self._retrieval_limit = retrieval_limit
+
+    async def invoke(self, payload: ResumeAgentPayload) -> dict[str, Any]:
+        if payload.query is None:
+            raise AppException("query is required", code=42222, status_code=422)
+        result = await self._service.answer(
+            user_id=self._user_id,
+            resume_id=payload.resume_id,
+            query=payload.query,
+            limit=self._retrieval_limit,
+        )
         return result.model_dump(mode="json")
 
 

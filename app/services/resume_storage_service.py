@@ -63,7 +63,7 @@ class ResumeStorageService:
             doc_hash=doc_hash,
         )
         if duplicate is not None:
-            return self._to_record(duplicate)
+            return self._to_record(duplicate, duplicate=True)
 
         parsed_document = await self._parser_service.parse_with_source(pdf_content)
         stored_object = None
@@ -114,7 +114,7 @@ class ResumeStorageService:
         if duplicate is not None:
             return ResumeIngestionPreparation(
                 doc_hash=doc_hash,
-                duplicate=self._to_record(duplicate),
+                duplicate=self._to_record(duplicate, duplicate=True),
             )
         stored_object = await self._object_store.save(
             user_id=user_id,
@@ -149,7 +149,7 @@ class ResumeStorageService:
         )
         if duplicate is not None:
             await self.discard_staged(stored_object)
-            return self._to_record(duplicate)
+            return self._to_record(duplicate, duplicate=True)
 
         try:
             parsed_document = await self._parser_service.parse_with_source(pdf_content)
@@ -238,7 +238,7 @@ class ResumeStorageService:
                 doc_hash=doc_hash,
             )
             if duplicate is not None:
-                return self._to_record(duplicate)
+                return self._to_record(duplicate, duplicate=True)
         logger.exception(
             "简历跨存储写入失败 resume_id=%s",
             record.id if record is not None else None,
@@ -317,12 +317,13 @@ class ResumeStorageService:
         return self._to_record(record)
 
     @staticmethod
-    def _to_record(record: Resume) -> ResumeRecord:
+    def _to_record(record: Resume, *, duplicate: bool = False) -> ResumeRecord:
         """把 ORM Resume 转换为 API DTO。"""
         return ResumeRecord(
             id=record.id,
             user_id=record.user_id,
             filename=record.filename,
+            duplicate=duplicate,
             doc_hash=record.doc_hash,
             file_size_bytes=record.file_size_bytes,
             content_type=record.content_type,

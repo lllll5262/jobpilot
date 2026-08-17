@@ -161,6 +161,74 @@ class InterviewService:
         job = JDParseResult.model_validate(job_record.parsed_data)
         return self._to_record(record, job.job_title)
 
+    async def request_topic(
+        self,
+        *,
+        user_id: int,
+        session_id: int,
+        topic: str,
+    ) -> InterviewQuestion:
+        """按用户指定主题替换当前未作答题，不把控制指令当作答案评分。"""
+        await require_user(self._user_repository, user_id)
+        record = await self._interview_repository.get_by_id(
+            session_id,
+            user_id=user_id,
+            for_update=True,
+        )
+        if record is None:
+            raise AppException("Interview session not found", code=40410, status_code=404)
+        context = await self._load_context(
+            user_id=user_id,
+            job_id=record.job_id,
+            resume_id=record.resume_id,
+            profile_id=record.profile_id,
+        )
+        rounds = [InterviewRound.model_validate(item) for item in record.rounds_data]
+        current_round = rounds[-1]
+        if current_round.evaluation is not None:
+            raise AppException("No pending interview question", code=40912, status_code=409)
+        rollback_misclassified_command = (
+            len(rounds) >= 2
+            and rounds[-2].evaluation is not None
+            and self._is_topic_control(rounds[-2].evaluation.user_answer)
+        )
+        sequence = rounds[-2].sequence if rollback_misclassified_command else current_round.sequence
+        question = await self._generate_question(
+            source=QuestionSource.REQUESTED,
+            sequence=sequence,
+            context=context,
+            rounds=rounds,
+            weak_points=list(record.weak_points),
+            requested_topic=topic,
+        )
+        if rollback_misclassified_command:
+            rounds = [*rounds[:-2], InterviewRound(sequence=sequence, question=question)]
+            weak_points = list(
+                dict.fromkeys(
+                    weak_point
+                    for round_ in rounds
+                    if round_.evaluation is not None
+                    for weak_point in round_.evaluation.weak_points
+                )
+            )
+        else:
+            rounds[-1] = InterviewRound(sequence=sequence, question=question)
+            weak_points = list(record.weak_points)
+        await self._interview_repository.update_progress(
+            record,
+            rounds_data=[round_.model_dump(mode="json") for round_ in rounds],
+            weak_points=weak_points,
+        )
+        return question
+
+    @staticmethod
+    def _is_topic_control(answer: str) -> bool:
+        """识别曾被旧前端错误提交为答案的指定主题指令。"""
+        return any(
+            marker in answer.casefold()
+            for marker in ("提问关于", "问我关于", "出题关于", "考察我关于")
+        )
+
     async def get_weak_points(
         self,
         *,
@@ -194,6 +262,7 @@ class InterviewService:
         context: dict[str, Any],
         rounds: list[InterviewRound],
         weak_points: list[str],
+        requested_topic: str | None = None,
     ) -> InterviewQuestion:
         """生成一道符合指定来源的问题，并拒绝重复题目。"""
         draft = await generate_structured_output(
@@ -207,6 +276,7 @@ class InterviewService:
                 parsed_job=context["job"].model_dump(mode="json"),
                 rounds=[round_.model_dump(mode="json") for round_ in rounds],
                 weak_points=weak_points,
+                requested_topic=requested_topic,
             ),
             schema=InterviewQuestionDraft,
             log_context=f"interview_question_{source.value}",

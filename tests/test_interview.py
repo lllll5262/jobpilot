@@ -96,6 +96,14 @@ class StubInterviewLLM:
                 "focus_points": ["重试", "补偿"],
                 "source_basis": "上一轮回答暴露的缓存一致性问题",
             }
+        if source == "requested":
+            assert payload["requested_topic"].casefold() == "redis"
+            return {
+                "topic": "Redis",
+                "question": "Redis 的 RDB 和 AOF 分别适合什么场景？",
+                "focus_points": ["持久化机制", "恢复速度", "数据完整性"],
+                "source_basis": "用户指定 Redis 主题",
+            }
         assert "Kafka" in payload["parsed_job"]["required_skills"]
         return {
             "topic": "Kafka",
@@ -231,6 +239,62 @@ def test_interview_adapts_without_question_limit_and_persists_answers() -> None:
         assert second.session.rounds[0].evaluation is not None
         assert second.session.rounds[0].evaluation.user_answer == "错误答案"
         assert second.session.rounds[0].evaluation.correct_answer
+
+    asyncio.run(run())
+
+
+def test_interview_topic_command_replaces_pending_question_without_scoring() -> None:
+    """指定 Redis 主题应替换待答题，不能生成一条 0 分评价。"""
+
+    async def run() -> None:
+        service = build_service()
+        session = await service.start(user_id=1, request=InterviewStartRequest(job_id=30))
+
+        question = await service.request_topic(
+            user_id=1,
+            session_id=session.id,
+            topic="Redis",
+        )
+        updated = await service.get_session(user_id=1, session_id=session.id)
+
+        assert question.question_id == "q1"
+        assert question.source == "requested"
+        assert question.topic == "Redis"
+        assert len(updated.rounds) == 1
+        assert updated.rounds[0].evaluation is None
+        assert updated.current_question == question
+
+    asyncio.run(run())
+
+
+def test_topic_retry_removes_previously_misclassified_score() -> None:
+    """旧前端已把主题指令评分时，重试换题应撤销错误轮次和衍生题。"""
+
+    async def run() -> None:
+        service = build_service()
+        session = await service.start(user_id=1, request=InterviewStartRequest(job_id=30))
+        mistaken = await service.answer(
+            user_id=1,
+            session_id=session.id,
+            request=InterviewAnswerRequest(
+                question_id="q1",
+                answer="我想让你提问关于redis的",
+            ),
+        )
+        assert mistaken.session.rounds[0].evaluation is not None
+
+        question = await service.request_topic(
+            user_id=1,
+            session_id=session.id,
+            topic="redis",
+        )
+        repaired = await service.get_session(user_id=1, session_id=session.id)
+
+        assert question.question_id == "q1"
+        assert len(repaired.rounds) == 1
+        assert repaired.rounds[0].evaluation is None
+        assert repaired.average_score is None
+        assert repaired.weak_points == []
 
     asyncio.run(run())
 

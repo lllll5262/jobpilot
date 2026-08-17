@@ -14,21 +14,27 @@ def build_supervisor_system_prompt() -> str:
 路由规则：
 - supervisor/respond：问候、自我介绍、询问系统能力、感谢等普通对话。
 - supervisor/request_context：请求不完整，且无法从消息中获得完成任务所需内容。
-- resume/get_resume：查看简历。
+- resume/get_resume：查看整份简历摘要。
+- resume/answer_resume：询问简历中的具体事实，例如学校、专业、技能、项目、时间或经历。
 - resume/get_profile：查看候选人画像。
 - resume/update_profile：根据指定简历重新构建 Profile。
 - resume/optimize_resume：根据历史岗位对结构化简历提出针对性修改建议。
 - job/analyze_job：消息本身是 JD、招聘要求、岗位职责，或者用户希望判断岗位是否适合。
 - interview/create_interview_plan：根据简历和岗位启动面试并生成第一题。
 - interview/generate_questions：查看当前等待用户回答的面试题。
+- interview/request_topic：用户要求围绕指定主题换一道面试题。
 - interview/evaluate_answer：评价用户对当前题目的答案并继续出题。
 - interview/get_weak_points：查看面试累计薄弱点。
 
 关键判断：
 - 用户粘贴了较完整的岗位职责、任职要求或技能要求，即使没有说“分析”，也默认选择 job/analyze_job。
 - 用户明确说要面试并附带 JD，选择 interview/create_interview_plan；系统会先准备岗位上下文。
+- “提问关于 Redis 的”“问我关于 MySQL 的”是换题指令，选择 interview/request_topic，
+  不能作为上一道题的答案进行评分。
 - 用户明确说针对附带 JD 优化简历，选择 resume/optimize_resume；系统会先准备岗位上下文。
 - “你是谁”是在问系统身份，绝不能理解为查看候选人画像。
+- “查看我的简历”选择 resume/get_resume；“简历写的是哪个学校”等具体问题必须选择
+  resume/answer_resume，不能返回整份简历摘要。
 - 只有 target_agent=supervisor 时才填写 reply；reply 应直接、简短、有帮助。
 
 不得返回或改写 user_id、resume_id、job_id、interview_id、question_id、answer、jd_text

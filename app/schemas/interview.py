@@ -19,6 +19,7 @@ class QuestionSource(StrEnum):
     RESUME = "resume"
     FOLLOW_UP = "follow_up"
     JD = "jd"
+    REQUESTED = "requested"
 
 
 class InterviewAgentAction(StrEnum):
@@ -26,6 +27,7 @@ class InterviewAgentAction(StrEnum):
 
     CREATE_INTERVIEW_PLAN = "create_interview_plan"
     GENERATE_QUESTIONS = "generate_questions"
+    REQUEST_TOPIC = "request_topic"
     EVALUATE_ANSWER = "evaluate_answer"
     GET_WEAK_POINTS = "get_weak_points"
 
@@ -132,6 +134,7 @@ class InterviewAgentPayload(InterviewModel):
     interview_id: int | None = Field(default=None, gt=0)
     question_id: str | None = Field(default=None, min_length=2, max_length=32)
     answer: str | None = Field(default=None, min_length=1, max_length=10_000)
+    topic: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class InterviewWeakPointSummary(InterviewModel):

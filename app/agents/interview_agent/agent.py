@@ -104,6 +104,23 @@ class InterviewAgent:
             data = await self._get_weak_points_tool.invoke(
                 {"interview_id": params.interview_id}
             )
+        elif action == InterviewAgentAction.REQUEST_TOPIC:
+            if params.interview_id is None or params.topic is None:
+                raise AppException(
+                    "interview_id and topic are required",
+                    code=42233,
+                    status_code=422,
+                )
+            question = await self._service.request_topic(
+                user_id=self._user_id,
+                session_id=params.interview_id,
+                topic=params.topic,
+            )
+            tool_name = "request_topic"
+            data = {
+                "interview_id": params.interview_id,
+                "current_question": question.model_dump(mode="json"),
+            }
         else:
             if params.interview_id is None:
                 raise AppException("interview_id is required", code=42232, status_code=422)

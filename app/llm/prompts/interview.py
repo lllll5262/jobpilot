@@ -16,6 +16,10 @@ def build_question_system_prompt(*, source: str) -> str:
             "不能切换到无关主题，也不能重复上一题。"
         ),
         "jd": "必须从 JD 尚未充分考察的技能或职责中选择一个新主题提问。",
+        "requested": (
+            "必须严格围绕用户指定的 requested_topic 提问；可以问通用技术原理，"
+            "但不得声称候选人拥有上下文中不存在的项目经历。"
+        ),
     }
     example = {
         "topic": "Redis 高并发",
@@ -50,6 +54,7 @@ def build_question_user_prompt(
     parsed_job: dict[str, Any],
     rounds: list[dict[str, Any]],
     weak_points: list[str],
+    requested_topic: str | None = None,
 ) -> str:
     """按来源裁剪上下文，追问时保留上一轮真实回答和评价。"""
     payload: dict[str, Any] = {
@@ -62,7 +67,12 @@ def build_question_user_prompt(
         payload["resume"] = resume
     elif source == "follow_up":
         payload["previous_round"] = rounds[-1]
+    elif source == "jd":
+        payload["raw_job_description"] = raw_jd
+        payload["parsed_job"] = parsed_job
     else:
+        payload["requested_topic"] = requested_topic
+        payload["resume"] = resume
         payload["raw_job_description"] = raw_jd
         payload["parsed_job"] = parsed_job
     return json.dumps(payload, ensure_ascii=False)

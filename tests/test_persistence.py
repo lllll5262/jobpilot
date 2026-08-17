@@ -514,5 +514,6 @@ def test_resume_storage_returns_duplicate_before_parsing_and_external_writes() -
 
         assert result.id == 10
         assert result.doc_hash == hashlib.sha256(pdf_content).hexdigest()
+        assert result.duplicate is True
 
     asyncio.run(run())

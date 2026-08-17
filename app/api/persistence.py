@@ -172,7 +172,10 @@ async def parse_and_save_resume(
         filename=filename,
         pdf_content=content,
     )
-    return ApiResponse(data=record)
+    return ApiResponse(
+        message="简历已上传过" if record.duplicate else "success",
+        data=record,
+    )
 
 
 @router.post(
@@ -196,8 +199,10 @@ async def enqueue_resume_ingestion(
     )
     if preparation.duplicate is not None:
         return ApiResponse(
+            message="简历已上传过",
             data=ResumeIngestionSubmission(
                 status="completed",
+                duplicate=True,
                 resume=preparation.duplicate,
             )
         )

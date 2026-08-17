@@ -111,7 +111,20 @@ class SupervisorGraph:
             payload["jd_text"] = message
             has_jd = True
 
-        if payload.get("answer") and payload.get("interview_id"):
+        requested_topic = SupervisorGraph._extract_interview_topic(message)
+        if requested_topic is not None:
+            payload = {
+                "interview_id": payload.get("interview_id"),
+                "topic": requested_topic,
+            }
+            if payload["interview_id"] is None:
+                payload.pop("interview_id")
+            route = SupervisorRoute(
+                target_agent=AgentTarget.INTERVIEW,
+                action=InterviewAgentAction.REQUEST_TOPIC,
+                reason="用户希望切换到指定的面试主题",
+            )
+        elif payload.get("answer") and payload.get("interview_id"):
             route = SupervisorRoute(
                 target_agent=AgentTarget.INTERVIEW,
                 action=InterviewAgentAction.EVALUATE_ANSWER,
@@ -144,6 +157,12 @@ class SupervisorGraph:
                 target_agent=AgentTarget.RESUME,
                 action=ResumeAgentAction.OPTIMIZE_RESUME,
                 reason="用户希望针对目标岗位优化简历",
+            )
+        elif SupervisorGraph._looks_like_resume_question(message):
+            route = SupervisorRoute(
+                target_agent=AgentTarget.RESUME,
+                action=ResumeAgentAction.ANSWER_RESUME,
+                reason="用户正在询问简历中的具体事实",
             )
         elif lowered in {"你是谁", "你是什么", "你能做什么", "介绍一下你自己"}:
             route = SupervisorRoute(
@@ -182,6 +201,49 @@ class SupervisorGraph:
         return any(marker in message for marker in markers) or sum(
             signal in message for signal in signals
         ) >= 3
+
+    @staticmethod
+    def _looks_like_resume_question(message: str) -> bool:
+        """区分具体简历问答与“查看整份简历”的摘要请求。"""
+        if "简历" not in message.casefold():
+            return False
+        fact_markers = (
+            "哪个",
+            "那个",
+            "什么",
+            "多少",
+            "是否",
+            "有没有",
+            "哪里",
+            "学校",
+            "专业",
+            "学历",
+            "技能",
+            "项目",
+            "经历",
+            "公司",
+            "时间",
+            "写的是",
+            "写了",
+        )
+        return any(marker in message for marker in fact_markers)
+
+    @staticmethod
+    def _extract_interview_topic(message: str) -> str | None:
+        """从明确的换题指令中提取主题，避免将其误判为当前题答案。"""
+        normalized = message.strip()
+        markers = ("提问关于", "问我关于", "出题关于", "考察我关于")
+        for marker in markers:
+            marker_index = normalized.find(marker)
+            if marker_index < 0:
+                continue
+            topic = normalized[marker_index + len(marker) :].strip(" ：:，,。！？!?\t")
+            for suffix in ("的问题", "的题目", "的题", "问题", "题目", "的"):
+                if topic.endswith(suffix):
+                    topic = topic[: -len(suffix)].strip()
+                    break
+            return topic[:100] or None
+        return None
 
     @staticmethod
     def _route_agent(state: SupervisorState) -> str:
@@ -233,7 +295,14 @@ class SupervisorGraph:
         route = state["route"]
         payload = dict(state["payload"])
         preparation_trace: list[str] = []
-        if route.action == ResumeAgentAction.OPTIMIZE_RESUME:
+        if route.action == ResumeAgentAction.ANSWER_RESUME:
+            payload = {
+                "resume_id": payload.get("resume_id"),
+                "query": state["message"].strip(),
+            }
+            if payload["resume_id"] is None:
+                payload.pop("resume_id")
+        elif route.action == ResumeAgentAction.OPTIMIZE_RESUME:
             payload, preparation_trace, missing = await self._ensure_job_context(
                 state, payload
             )
@@ -252,7 +321,7 @@ class SupervisorGraph:
             if exc.code in {40402, 40403}:
                 return self._missing_context(
                     state,
-                    "还没有可用于优化的简历和候选人画像。请先点击附件按钮上传 PDF 简历。",
+                    "还没有可用的简历。请先点击附件按钮上传 PDF 简历。",
                     ["resume"],
                 )
             raise
@@ -301,7 +370,8 @@ class SupervisorGraph:
         payload = {
             key: value
             for key, value in state["payload"].items()
-            if key in {"job_id", "interview_id", "question_id", "answer", "jd_text"}
+            if key
+            in {"job_id", "interview_id", "question_id", "answer", "jd_text", "topic"}
         }
         preparation_trace: list[str] = []
         if route.action == InterviewAgentAction.CREATE_INTERVIEW_PLAN:
@@ -315,6 +385,13 @@ class SupervisorGraph:
                     state,
                     "开始面试前，请粘贴目标岗位 JD，或在“上下文”中填写岗位 ID。",
                     ["job_id", "jd_text"],
+                )
+        elif route.action == InterviewAgentAction.REQUEST_TOPIC:
+            if not payload.get("interview_id"):
+                return self._missing_context(
+                    state,
+                    "请先开始一场模拟面试，再指定希望提问的主题。",
+                    ["interview_id"],
                 )
         elif route.action == InterviewAgentAction.EVALUATE_ANSWER:
             missing = [
