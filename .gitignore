@@ -11,6 +11,7 @@ __pycache__/
 # 本地 RAG 评估集可能包含真实简历事实，评估结果也不进入版本库。
 evals/datasets/resume_rag.json
 evals/results/
+evals/.ragas_cache/
 
 # IDE 与操作系统文件。
 .idea/

@@ -1,6 +1,7 @@
 """Milvus 简历父子块混合向量存储。"""
 
 import asyncio
+import math
 from collections.abc import Mapping
 from threading import Lock
 from typing import Any
@@ -174,6 +175,7 @@ class MilvusResumeVectorStore:
         resume_id: int | None,
     ) -> list[ResumeChunkMatch]:
         from pymilvus import AnnSearchRequest, WeightedRanker
+        from pymilvus.exceptions import MilvusException
 
         self._ensure_initialized()
         embeddings = self._embedding.encode_queries([query])
@@ -192,21 +194,34 @@ class MilvusResumeVectorStore:
         conditions = [f"user_id == {user_id}"]
         if resume_id is not None:
             conditions.append(f"resume_id == {resume_id}")
-        results = self._client.hybrid_search(
-            collection_name=self._collection_name,
-            reqs=[dense_request, sparse_request],
-            ranker=WeightedRanker(0.7, 0.3),
-            limit=limit,
-            filter=" and ".join(conditions),
-            output_fields=[
-                "resume_id",
-                "doc_hash",
-                "parent_id",
-                "text",
-                "parent_content",
-            ],
-        )
-        hits = results[0] if results else []
+        filter_expression = " and ".join(conditions)
+        output_fields = [
+            "resume_id",
+            "doc_hash",
+            "parent_id",
+            "text",
+            "parent_content",
+        ]
+        try:
+            results = self._client.hybrid_search(
+                collection_name=self._collection_name,
+                reqs=[dense_request, sparse_request],
+                ranker=WeightedRanker(0.7, 0.3),
+                limit=limit,
+                filter=filter_expression,
+                output_fields=output_fields,
+            )
+            hits = results[0] if results else []
+        except MilvusException as exc:
+            if "unsupported ID type" not in str(exc):
+                raise
+            hits = self._fallback_weighted_search(
+                dense_vector=embeddings["dense"][0].tolist(),
+                sparse_vector=self._sparse_row(embeddings["sparse"], 0),
+                filter_expression=filter_expression,
+                output_fields=output_fields,
+                limit=limit,
+            )
         matches: list[ResumeChunkMatch] = []
         for hit in hits:
             entity = hit.get("entity", {}) if isinstance(hit, Mapping) else hit.entity
@@ -224,6 +239,54 @@ class MilvusResumeVectorStore:
                 )
             )
         return matches
+
+    def _fallback_weighted_search(
+        self,
+        *,
+        dense_vector: list[float],
+        sparse_vector: dict[int, float],
+        filter_expression: str,
+        output_fields: list[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """兼容部分 Milvus 3.0 服务端无法融合 VARCHAR 主键的情况。"""
+        common_options = {
+            "collection_name": self._collection_name,
+            "filter": filter_expression,
+            "limit": limit,
+            "output_fields": output_fields,
+        }
+        dense_results = self._client.search(
+            data=[dense_vector],
+            anns_field="dense_vector",
+            search_params={"metric_type": "IP", "params": {"nprobe": 10}},
+            **common_options,
+        )
+        sparse_results = self._client.search(
+            data=[sparse_vector],
+            anns_field="sparse_vector",
+            search_params={"metric_type": "IP"},
+            **common_options,
+        )
+
+        fused: dict[str, dict[str, Any]] = {}
+        for results, weight in ((dense_results, 0.7), (sparse_results, 0.3)):
+            for hit in results[0] if results else []:
+                hit_id = hit.get("id") if isinstance(hit, Mapping) else hit.id
+                entity = hit.get("entity", {}) if isinstance(hit, Mapping) else hit.entity
+                distance = hit.get("distance", 0.0) if isinstance(hit, Mapping) else hit.distance
+                key = str(hit_id)
+                item = fused.setdefault(
+                    key,
+                    {"id": hit_id, "entity": entity, "distance": 0.0},
+                )
+                item["distance"] += weight * self._normalize_ip_score(float(distance))
+        return sorted(fused.values(), key=lambda item: item["distance"], reverse=True)[:limit]
+
+    @staticmethod
+    def _normalize_ip_score(score: float) -> float:
+        """按 Milvus WeightedRanker 的 arctan 方式把 IP 分数映射到 0 到 1。"""
+        return 0.5 + math.atan(score) / math.pi
 
     async def delete(self, *, resume_id: int, user_id: int) -> None:
         """删除一次失败写入产生的向量块。"""

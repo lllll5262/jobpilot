@@ -1,4 +1,4 @@
-"""MongoDB/Milvus 简历存储组件的进程级生命周期。"""
+"""Milvus 简历存储组件的进程级生命周期。"""
 
 from functools import lru_cache
 
@@ -6,18 +6,6 @@ from app.core.config import get_settings
 from app.services.resume_chunking_service import ResumeChunkingService
 from app.services.resume_knowledge_service import ResumeKnowledgeService
 from app.vectorstore.milvus_resume_store import MilvusResumeVectorStore
-from app.vectorstore.mongo_resume_store import MongoResumeDocumentStore
-
-
-@lru_cache
-def get_mongo_resume_store() -> MongoResumeDocumentStore:
-    """复用 MongoDB 连接池。"""
-    settings = get_settings()
-    return MongoResumeDocumentStore(
-        url=settings.mongo_url.get_secret_value(),
-        database=settings.mongo_database,
-        collection=settings.mongo_resume_collection,
-    )
 
 
 @lru_cache
@@ -42,7 +30,7 @@ def get_milvus_resume_store() -> MilvusResumeVectorStore:
 
 @lru_cache
 def get_resume_knowledge_service() -> ResumeKnowledgeService:
-    """组装父子分块、MongoDB 原文和 Milvus 双向量存储。"""
+    """组装父子分块和 Milvus 双向量存储，不启用 MongoDB 原文存储。"""
     settings = get_settings()
     return ResumeKnowledgeService(
         chunking_service=ResumeChunkingService(
@@ -50,17 +38,14 @@ def get_resume_knowledge_service() -> ResumeKnowledgeService:
             child_chunk_size=settings.resume_child_chunk_size,
             chunk_overlap=settings.resume_chunk_overlap,
         ),
-        document_store=get_mongo_resume_store(),
+        document_store=None,
         vector_store=get_milvus_resume_store(),
     )
 
 
 async def dispose_resume_knowledge_stores() -> None:
-    """应用停止时释放外部数据库连接和模型引用。"""
-    if get_mongo_resume_store.cache_info().currsize:
-        get_mongo_resume_store().close()
+    """应用停止时释放 Milvus 连接和模型引用。"""
     if get_milvus_resume_store.cache_info().currsize:
         get_milvus_resume_store().close()
     get_resume_knowledge_service.cache_clear()
-    get_mongo_resume_store.cache_clear()
     get_milvus_resume_store.cache_clear()

@@ -60,7 +60,7 @@ class ResumeStorageService:
         except Exception as exc:
             # MySQL 记录只用于维持现有 Profile/Interview 外键；外部存储失败时同步回滚。
             await self._resume_repository.delete(record.id, user_id=user_id)
-            logger.exception("简历写入 MongoDB/Milvus 失败 resume_id=%s", record.id)
+            logger.exception("简历写入知识索引失败 resume_id=%s", record.id)
             raise AppException(
                 "Resume knowledge storage is unavailable",
                 code=50320,

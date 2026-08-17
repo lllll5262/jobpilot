@@ -1,4 +1,4 @@
-"""MongoDB 原文与 Milvus 父子块编排测试，不连接真实外部服务。"""
+"""可选原文存储与 Milvus 父子块编排测试，不连接真实外部服务。"""
 
 import asyncio
 from typing import Any
@@ -112,5 +112,35 @@ def test_knowledge_service_saves_source_and_indexes_chunks() -> None:
         assert document_store.document["content"] == content
         assert vector_store.chunks
         assert matches[0].parent_content
+
+    asyncio.run(run())
+
+
+def test_knowledge_service_can_index_without_document_store() -> None:
+    """关闭 MongoDB 后仍应完成父子分块和向量索引。"""
+
+    async def run() -> None:
+        vector_store = FakeVectorStore()
+        service = ResumeKnowledgeService(
+            chunking_service=ResumeChunkingService(
+                parent_chunk_size=40,
+                child_chunk_size=20,
+                chunk_overlap=5,
+            ),
+            document_store=None,
+            vector_store=vector_store,
+        )
+
+        await service.save(
+            resume_id=10,
+            user_id=1,
+            filename="resume.pdf",
+            doc_hash="a" * 64,
+            content="技能：Java、Redis。项目：使用 Redis 和 Lua 实现库存扣减。",
+            structured_data={"skills": ["Java", "Redis"]},
+        )
+
+        assert vector_store.chunks
+        assert await service.get_source(resume_id=10, user_id=1) is None
 
     asyncio.run(run())

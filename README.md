@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot 是一个分阶段构建的多 Agent 智能求职助手。MySQL 保存业务关系，MongoDB 保存完整简历原文，Milvus 保存可检索的简历父子块向量。
+JobPilot 是一个分阶段构建的多 Agent 智能求职助手。MySQL 保存业务关系，Milvus 保存可检索的简历父子块向量；当前上传链路不启用 MongoDB。
 
 ## 环境要求
 
@@ -77,15 +77,15 @@ curl.exe -X POST "http://127.0.0.1:8000/users/1/resumes/parse" `
 持久化上传接口 `POST /users/{user_id}/resumes/parse` 还会执行以下流程：
 
 ```text
-PDF → 清洗后完整正文 → MongoDB（来源与结构化结果）
-                  └→ 父块 1000 字符 → 子块 400 字符
-                                    └→ BGE-M3 稠密/稀疏向量 → Milvus
+PDF → 清洗后完整正文 → 父块 1000 字符 → 子块 400 字符
+                                          └→ BGE-M3 稠密/稀疏向量 → Milvus
 ```
 
 Milvus 使用稠密向量和稀疏向量双路召回，并通过 `WeightedRanker(0.7, 0.3)`
 融合排序，不依赖 Elasticsearch。`POST /users/{user_id}/resumes/search` 用于检索相关
-子块并返回对应父块，`GET /users/{user_id}/resumes/{resume_id}/source` 用于读取 MongoDB
-中的完整原文进行来源核验。MySQL 中的 Resume ID 继续作为 Profile 和 Interview 的外键。
+子块并返回对应父块。Milvus 实体自身保存 `parent_content`，用于生成上下文和来源核验；
+完整原文接口在未配置文档存储时返回未找到。MySQL 中的 Resume ID 继续作为 Profile 和
+Interview 的外键。
 
 ## 候选人能力画像
 
@@ -133,7 +133,7 @@ Get-Content "database/jobpilot_schema.sql" -Raw | mysql -h <mysql-host> -P <mysq
 - `POST /users`：创建用户
 - `POST /users/{user_id}/resumes/parse`：解析并保存 Resume
 - `POST /users/{user_id}/resumes/search`：Milvus 稠密/稀疏混合检索
-- `GET /users/{user_id}/resumes/{resume_id}/source`：查看 MongoDB 完整简历来源
+- `GET /users/{user_id}/resumes/{resume_id}/source`：文档存储未启用时返回未找到
 - `POST /users/{user_id}/profiles/build`：构建并保存当前 Profile
 - `GET /users/{user_id}/profile`：查看当前 Profile
 - `POST /users/{user_id}/jobs/parse`：解析并保存 JD
@@ -192,7 +192,7 @@ jobpilot:cache:*        # 最近岗位分析上下文
 jobpilot:checkpoint:*   # LangGraph 执行状态
 ```
 
-当前实现使用 `redis-py asyncio` 和普通 Redis 命令实现 LangGraph Checkpointer，不要求 RedisJSON 或 RediSearch。MySQL 保存业务关系，MongoDB 保存完整简历来源，Milvus 保存简历检索块；Redis 数据均设置 TTL。
+当前实现使用 `redis-py asyncio` 和普通 Redis 命令实现 LangGraph Checkpointer，不要求 RedisJSON 或 RediSearch。MySQL 保存业务关系，Milvus 保存简历检索块及父块内容；Redis 数据均设置 TTL。
 
 ## 多岗位对比与技能差距
 
